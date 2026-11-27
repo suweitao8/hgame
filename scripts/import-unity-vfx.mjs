@@ -748,7 +748,8 @@ function inspectMaterial(matInfo, guidMap, deps) {
     }
   }
 
-  const isLit = /_NORMALMAP|_METALLIC|_SPECGLOSSMAP|Standard Surface/i.test(txt) || /guid:\s*0406db5a14f94604a8c57ccfbc9f3b46/.test(txt);
+  // 0406db5a14f94604a8c57ccfbc9f3b46 is URP/Particles/Unlit; 933532a4fcc9baf4fa0491de14d08ed7 is URP/Lit.
+  const isLit = /_NORMALMAP|_METALLIC|_SPECGLOSSMAP|Standard Surface/i.test(txt) || /guid:\s*933532a4fcc9baf4fa0491de14d08ed7/.test(txt);
   const isOpaque = surfaceMode !== undefined ? surfaceMode === '0' : /- _Mode:\s*[01]\b/.test(txt);
   const softParticles = Number(txt.match(/- _SoftParticlesEnabled:[ \t]*([^\s]+)/)?.[1]);
   const clearedBase = !mainTexBlock || /m_Texture:\s*\{fileID:\s*0\s*[,}]/.test(mainTexBlock);

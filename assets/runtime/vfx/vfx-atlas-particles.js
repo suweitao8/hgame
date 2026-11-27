@@ -1042,7 +1042,8 @@ void main() {
         ? (curSize * lsSigned2 + spd * stretchScales.x * 0.015)
         : (curSize * (1.0 + scaleYPair.x * min(spd * 0.015, 4.0)));
     }
-    vec2 p2 = worldPos.xy + axisX * (posLocal.x * lenScale) + axisY * (posLocal.y * curSizeY * aspectY);
+    float sign2 = lenScale < 0.0 ? -1.0 : 1.0;
+    vec2 p2 = worldPos.xy + (axisX * sign2) * (posLocal.x * abs(lenScale)) + (axisY * sign2) * (posLocal.y * curSizeY * aspectY);
     vec4 mvPos2 = modelViewMatrix * vec4(p2, worldPos.z + offLocal.z * curSize, 1.0);
     vViewDirView = -mvPos2.xyz;
     gl_Position = projectionMatrix * mvPos2;
@@ -1125,9 +1126,13 @@ void main() {
         ? (lenBase * lsSigned + min(spd * stretchScales.x, lenBase * 8.0))
         : (lenBase * (1.0 + scaleYPair.x * min(spd * 0.08, 4.5)));
       float billH = curSize;
+      float majorSign = major < 0.0 ? -1.0 : 1.0;
+      vec3 effAxis3 = axis3 * majorSign;
+      vec3 effSide3 = side3 * majorSign;
+      float absMajor = abs(major);
       float stretchX = (posLocal.x - pivotPair.x) - 0.5 + (major < 0.0 ? -pivotPair.y : pivotPair.y);
       float stretchY = (posLocal.y - pivotPair.y) - pivotPair.x;
-      mvCenter.xyz += axis3 * (stretchX * major) + side3 * (stretchY * billH) + toCam * (offLocal.z * curSize);
+      mvCenter.xyz += effAxis3 * (stretchX * absMajor) + effSide3 * (stretchY * billH) + toCam * (offLocal.z * curSize);
       vViewDirView = -mvCenter.xyz;
       vNormalView = toCam;
       gl_Position = projectionMatrix * mvCenter;
@@ -1761,7 +1766,8 @@ void main() {
 
   float billH = (renderMode < 0.5) ? (curSizeY * aspectY) : curSizeY;
   vec2 posLocal = aQuadPos + pivotPair;
-  vec2 p = worldPos + axisX * (posLocal.x * lenScale) + axisY * (posLocal.y * billH);
+  float signW = lenScale < 0.0 ? -1.0 : 1.0;
+  vec2 p = worldPos + (axisX * signW) * (posLocal.x * abs(lenScale)) + (axisY * signW) * (posLocal.y * billH);
   vec2 screenPx = (p - uCamPos) * uCamZoom + uViewSize * 0.5;
   vec2 ndc = vec2(
     (screenPx.x / max(1.0, uViewSize.x)) * 2.0 - 1.0,

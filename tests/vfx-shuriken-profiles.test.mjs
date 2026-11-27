@@ -24,6 +24,7 @@ import {
   compileShurikenLayer,
   createShurikenKernel,
   createVfxSystem,
+  ATLAS_PARTICLE_VERTEX_GLSL,
 } from '../assets/runtime/vfx/index.js';
 import { convertUnityPrefab } from '../scripts/import-unity-vfx.mjs';
 import { buildGlbBuffer, parseUnityAssetMesh } from '../scripts/export-unity-vfx-bench.mjs';
@@ -628,4 +629,123 @@ test('auditVfxPackParity catches all 5 defect classes and passes clean packs', (
   assert.equal(cleanReport.missingMeshCount, 0);
   assert.equal(cleanReport.staleBlendCount, 0);
   assert.equal(cleanReport.routingMismatchCount, 0);
+});
+
+test('ATLAS_PARTICLE_VERTEX_GLSL preserves front-facing winding for negative lengthScale and URP Particles/Unlit exports unlit', () => {
+  assert.ok(ATLAS_PARTICLE_VERTEX_GLSL.includes('float majorSign = major < 0.0 ? -1.0 : 1.0;'), 'stretched 3D shader preserves winding via majorSign');
+  assert.ok(ATLAS_PARTICLE_VERTEX_GLSL.includes('vec3 effAxis3 = axis3 * majorSign;'), 'stretched 3D shader flips axis3 consistently with side3');
+  assert.ok(ATLAS_PARTICLE_VERTEX_GLSL.includes('vec3 effSide3 = side3 * majorSign;'), 'stretched 3D shader flips side3 to preserve CCW winding');
+
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hgame-vfx-urp-unlit-'));
+  try {
+    const unlitMatGuid = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const litMatGuid = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    const unlitMatPath = path.join(tmpDir, 'SolidUnlit.mat');
+    const litMatPath = path.join(tmpDir, 'SolidLit.mat');
+    fs.writeFileSync(unlitMatPath, [
+      '%YAML 1.1',
+      '--- !u!21 &2100000',
+      'Material:',
+      '  m_Name: SolidUnlit',
+      '  m_Shader: {fileID: 4800000, guid: 0406db5a14f94604a8c57ccfbc9f3b46, type: 3}',
+      '  m_SavedProperties:',
+      '    m_Floats:',
+      '    - _Surface: 1',
+      '    - _Blend: 0',
+      '    m_Colors:',
+      '    - _BaseColor: {r: 1, g: 1, b: 1, a: 1}',
+    ].join('\n'));
+    fs.writeFileSync(`${unlitMatPath}.meta`, `fileFormatVersion: 2\nguid: ${unlitMatGuid}\n`);
+    fs.writeFileSync(litMatPath, [
+      '%YAML 1.1',
+      '--- !u!21 &2100000',
+      'Material:',
+      '  m_Name: SolidLit',
+      '  m_Shader: {fileID: 4800000, guid: 933532a4fcc9baf4fa0491de14d08ed7, type: 3}',
+      '  m_SavedProperties:',
+      '    m_Floats:',
+      '    - _Surface: 0',
+      '    m_Colors:',
+      '    - _BaseColor: {r: 1, g: 1, b: 1, a: 1}',
+    ].join('\n'));
+    fs.writeFileSync(`${litMatPath}.meta`, `fileFormatVersion: 2\nguid: ${litMatGuid}\n`);
+
+    const prefabPath = path.join(tmpDir, 'UrpLitCheck.prefab');
+    fs.writeFileSync(prefabPath, [
+      '%YAML 1.1',
+      '--- !u!1 &1',
+      'GameObject:',
+      '  m_Name: UnlitMesh',
+      '  m_IsActive: 1',
+      '--- !u!4 &2',
+      'Transform:',
+      '  m_GameObject: {fileID: 1}',
+      '  m_LocalPosition: {x: 0, y: 0, z: 0}',
+      '  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}',
+      '  m_LocalScale: {x: 1, y: 1, z: 1}',
+      '  m_Father: {fileID: 0}',
+      '--- !u!198 &3',
+      'ParticleSystem:',
+      '  m_GameObject: {fileID: 1}',
+      '  EmissionModule:',
+      '    enabled: 1',
+      '    rateOverTime:',
+      '      scalar: 0',
+      '    m_BurstCount: 1',
+      '    m_Bursts:',
+      '    - serializedVersion: 2',
+      '      time: 0',
+      '      countCurve:',
+      '        scalar: 1',
+      '--- !u!199 &4',
+      'ParticleSystemRenderer:',
+      '  m_GameObject: {fileID: 1}',
+      '  m_Enabled: 1',
+      '  m_RenderMode: 4',
+      '  m_Mesh: {fileID: 10207}',
+      '  m_Materials:',
+      `  - {fileID: 2100000, guid: ${unlitMatGuid}, type: 2}`,
+      '--- !u!1 &11',
+      'GameObject:',
+      '  m_Name: LitMesh',
+      '  m_IsActive: 1',
+      '--- !u!4 &12',
+      'Transform:',
+      '  m_GameObject: {fileID: 11}',
+      '  m_LocalPosition: {x: 0, y: 0, z: 0}',
+      '  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}',
+      '  m_LocalScale: {x: 1, y: 1, z: 1}',
+      '  m_Father: {fileID: 2}',
+      '--- !u!198 &13',
+      'ParticleSystem:',
+      '  m_GameObject: {fileID: 11}',
+      '  EmissionModule:',
+      '    enabled: 1',
+      '    rateOverTime:',
+      '      scalar: 0',
+      '    m_BurstCount: 1',
+      '    m_Bursts:',
+      '    - serializedVersion: 2',
+      '      time: 0',
+      '      countCurve:',
+      '        scalar: 1',
+      '--- !u!199 &14',
+      'ParticleSystemRenderer:',
+      '  m_GameObject: {fileID: 11}',
+      '  m_Enabled: 1',
+      '  m_RenderMode: 4',
+      '  m_Mesh: {fileID: 10207}',
+      '  m_Materials:',
+      `  - {fileID: 2100000, guid: ${litMatGuid}, type: 2}`,
+    ].join('\n'));
+
+    const { recipe } = convertUnityPrefab({ unityRoot: tmpDir, prefabPath, id: 'urp_lit_check' });
+    const unlitLayer = recipe.layers.find((l) => l.name === 'unlitmesh');
+    const litLayer = recipe.layers.find((l) => l.name === 'litmesh');
+    assert.ok(unlitLayer && litLayer);
+    assert.ok(!unlitLayer.lit, `URP/Particles/Unlit should not set lit=true, got ${unlitLayer.lit}`);
+    assert.equal(litLayer.lit, true, 'URP/Lit should set lit=true');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
 });

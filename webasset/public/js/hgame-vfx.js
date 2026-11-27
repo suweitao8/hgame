@@ -1287,6 +1287,8 @@ function frameBenchCamera(vp, effectId) {
   vp.controls.update();
 }
 
+const GROUND_ANCHORED_BENCH_RE = /(?:aura|shield|circle|ring|field|ground|slam|geysir|geyser|fountain|puddle|portal|zone|curse|cage|nukevertical|firefield|acidboiling|water|campfire|torch|candle|tornado|whirlpool|volcano)/i;
+
 function computeBenchPlayY(recipe, effectId) {
   let yOff = 0.05;
   if (effectId === 'arpg_arcane_cage' || effectId === 'arpg_arcane_circle') {
@@ -1296,8 +1298,16 @@ function computeBenchPlayY(recipe, effectId) {
       if (Number.isFinite(oy) && oy < minOffY) minOffY = oy;
     }
     yOff = Math.max(0.05, -minOffY + 0.05);
+    return yOff;
   }
-  return yOff;
+  const eid = String(effectId || recipe?.id || '');
+  const hasGroundLayer = Array.isArray(recipe?.layers)
+    && recipe.layers.some((l) => l.renderMode === 'horizontal' || l.renderMode === 'vertical');
+  const isLegacyGround = /^(?:arpg_|bones_|deathice_)/i.test(eid);
+  if (isLegacyGround || hasGroundLayer || GROUND_ANCHORED_BENCH_RE.test(eid)) {
+    return 0.05;
+  }
+  return 1.15;
 }
 
 function getBenchTelemetryTotals(st) {
