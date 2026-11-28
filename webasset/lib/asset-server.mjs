@@ -1048,9 +1048,24 @@ export function createAssetHandler({
             assets,
             generatedAssets,
             models,
+            ...(entry.createdAt ? { createdAt: entry.createdAt } : {}),
             ...(avatarUrl ? { avatarUrl } : {}),
           });
         }
+
+        // Prioritize characters missing reference images, then newer createdAt, preserving DB sort_order ties.
+        characters.sort((a, b) => {
+          const aHasRef = Array.isArray(a.assets) && a.assets.length > 0 ? 1 : 0;
+          const bHasRef = Array.isArray(b.assets) && b.assets.length > 0 ? 1 : 0;
+          if (aHasRef !== bHasRef) return aHasRef - bHasRef;
+          const aTime = a.createdAt ? Date.parse(a.createdAt) : Number.NaN;
+          const bTime = b.createdAt ? Date.parse(b.createdAt) : Number.NaN;
+          const aValid = Number.isFinite(aTime);
+          const bValid = Number.isFinite(bTime);
+          if (aValid && bValid && aTime !== bTime) return bTime - aTime;
+          if (aValid !== bValid) return bValid ? 1 : -1;
+          return 0;
+        });
 
         return {
           characters,

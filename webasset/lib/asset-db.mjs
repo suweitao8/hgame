@@ -426,6 +426,7 @@ export function openAssetDb(dbPath) {
       ...(row.research_json ? { research: parseJsonSafe(row.research_json, null) } : {}),
       assets,
       generatedAssets,
+      ...(row.created_at ? { createdAt: row.created_at } : {}),
       ...(Object.keys(models).length ? { models } : {}),
     };
     return out;
@@ -461,7 +462,7 @@ export function openAssetDb(dbPath) {
 
   function insertCharacter(character) {
     const now = new Date().toISOString();
-    const maxOrder = db.prepare('SELECT COALESCE(MAX(sort_order), -1) AS m FROM characters').get().m;
+    const minOrder = db.prepare('SELECT COALESCE(MIN(sort_order), 1) AS m FROM characters').get().m;
     db.prepare(`
       INSERT INTO characters (
         id, name, gender, keywords_json, aliases_json, props_json, personality_json,
@@ -476,7 +477,7 @@ export function openAssetDb(dbPath) {
       JSON.stringify(character.props || []),
       JSON.stringify(character.personality || []),
       character.research ? JSON.stringify(character.research) : null,
-      maxOrder + 1,
+      minOrder - 1,
       now,
       now,
     );

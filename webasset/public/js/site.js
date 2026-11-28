@@ -184,6 +184,21 @@ characterModeTabs.forEach((tab, index) => {
   });
 });
 
+function sortCharactersForDisplay(list) {
+  return [...list].sort((a, b) => {
+    const aHasRef = Array.isArray(a?.assets) && a.assets.length > 0 ? 1 : 0;
+    const bHasRef = Array.isArray(b?.assets) && b.assets.length > 0 ? 1 : 0;
+    if (aHasRef !== bHasRef) return aHasRef - bHasRef;
+    const aTime = a?.createdAt ? Date.parse(a.createdAt) : Number.NaN;
+    const bTime = b?.createdAt ? Date.parse(b.createdAt) : Number.NaN;
+    const aValid = Number.isFinite(aTime);
+    const bValid = Number.isFinite(bTime);
+    if (aValid && bValid && aTime !== bTime) return bTime - aTime;
+    if (aValid !== bValid) return bValid ? 1 : -1;
+    return 0;
+  });
+}
+
 async function loadCharacters() {
   const requestVersion = ++characterRequestVersion;
   assetResults.replaceChildren();
@@ -197,10 +212,9 @@ async function loadCharacters() {
     const data = await response.json();
     if (requestVersion !== characterRequestVersion) return;
 
-    characters = data.items || [];
+    characters = sortCharactersForDisplay(data.items || []);
     renderCharacterList();
     const initialCharacter = characters.find(character => character.id === activeCharacterId)
-      || characters.find(character => character.id === 'chouju')
       || characters[0];
     if (initialCharacter) {
       selectCharacter(initialCharacter.id);

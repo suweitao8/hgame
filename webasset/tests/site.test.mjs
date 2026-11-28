@@ -479,3 +479,78 @@ test('tests workspace exposes global LOD0-LOD3 switcher with manual overrides an
   assert.match(modelShowcaseJs, /export function resolveDistanceLodLevel/);
   assert.match(modelShowcaseJs, /lodMode === '3' \|\| numMode === 3/);
 });
+
+test('characters prioritize missing-reference and newly created entries at the top while preserving seeded order', async t => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'webasset-char-order-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const imageRoot = path.join(dir, 'images');
+  const characterCatalog = path.join(imageRoot, 'characters', 'index.json');
+  const seededImgA = 'characters/seeded-a/images/ref.png';
+  const seededImgB = 'characters/seeded-b/images/ref.png';
+  await mkdir(path.dirname(path.join(imageRoot, seededImgA)), { recursive: true });
+  await mkdir(path.dirname(path.join(imageRoot, seededImgB)), { recursive: true });
+  await writeFile(path.join(imageRoot, seededImgA), tinyPng);
+  await writeFile(path.join(imageRoot, seededImgB), tinyPng);
+  await writeFile(characterCatalog, JSON.stringify({
+    schemaVersion: 3,
+    characters: [
+      {
+        id: 'seeded-a',
+        name: 'Seeded A',
+        props: [],
+        personality: [],
+        assets: [{ name: 'ref.png', path: seededImgA, kind: 'reference', createdAt: '2026-11-01T00:00:00.000Z' }],
+        generatedAssets: [],
+      },
+      {
+        id: 'seeded-b',
+        name: 'Seeded B',
+        props: [],
+        personality: [],
+        assets: [{ name: 'ref.png', path: seededImgB, kind: 'reference', createdAt: '2026-11-01T00:00:00.000Z' }],
+        generatedAssets: [],
+      },
+      {
+        id: 'seeded-noref',
+        name: 'Seeded NoRef',
+        props: [],
+        personality: [],
+        assets: [],
+        generatedAssets: [],
+      },
+    ],
+  }));
+
+  await withServer({ siteRoot: root, imageRoot, characterCatalog, gamesRoot: path.join(dir, 'games') }, async base => {
+    const createRes1 = await fetch(base + '/api/characters', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'New Older' }),
+    });
+    assert.equal(createRes1.status, 201);
+    const newOlder = (await createRes1.json()).character;
+
+    await new Promise(resolve => setTimeout(resolve, 15));
+
+    const createRes2 = await fetch(base + '/api/characters', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'New Newer' }),
+    });
+    assert.equal(createRes2.status, 201);
+    const newNewer = (await createRes2.json()).character;
+
+    const uploadRes = await fetch(`${base}/api/assets?characterId=${encodeURIComponent(newOlder.id)}&name=ref.png`, {
+      method: 'POST',
+      headers: { 'content-type': 'image/png' },
+      body: tinyPng,
+    });
+    assert.equal(uploadRes.status, 201);
+
+    const payload = await (await fetch(base + '/api/assets?category=characters:all&limit=120')).json();
+    assert.deepEqual(
+      payload.items.map(item => item.name),
+      ['New Newer', 'Seeded NoRef', 'New Older', 'Seeded A', 'Seeded B'],
+    );
+  });
+});
