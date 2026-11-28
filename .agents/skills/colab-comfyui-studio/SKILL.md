@@ -27,8 +27,10 @@ description: Google Colab + ComfyUI + WebAsset `#studio` 远程生图与音视�
 ### 1. 启动 / 重连 Colab 并接入 WebAsset
 
 1. **选择合适运行时**：
-   - 低 CU 调试 / 熟悉流程：**T4 高 RAM** + Cell 5 `EXTRA_ARGS = "--lowvram"`。
-   - 正式高速出片：**A100（40GB/80GB）高 RAM** + Cell 5 `EXTRA_ARGS = "--highvram"`（40GB 可配 `--normalvram`）。
+   - **L4（24GB）高 RAM（当前默认）**：日常生图与常规开发性价比最高，Cell 5 配 `EXTRA_ARGS = ""`（留空默认自动管理；若跑超大视频模型爆显存可降为 `--lowvram`）。
+   - **G4（RTX PRO 6000 Blackwell 96GB）高 RAM**：大型模型与批量视频生成性价比最高（后续大量做视频时切换），Cell 5 配 `EXTRA_ARGS = "--highvram"`。
+   - T4（15GB）高 RAM 仅作最低成本备用（`--lowvram`）。
+   - **模型持久化**：Cell 1 默认开启 `CACHE_MODELS_ON_DRIVE = True`，将 `/content/ComfyUI/models` 软链到 `MyDrive/ComfyUI_Colab/models`；在 L4 与 G4 之间切换时，仅需跑 Cell 1（挂盘）→ Cell 2（~1 分钟装依赖）→ Cell 5（启动），模型自动跳过免重复下载。
 2. **使用 `browser` subagent 操作 Colab**：
    - 首次登录或挂载 Google Drive（`accounts.google.com` OAuth 弹窗）属于受保护认证域，**必须暂停并请用户在浏览器面板手动点击确认**，随后用 `send_message` 唤醒同一 subagent 继续。
    - 若仅修改了 Notebook 局部单元，**刷新页面时保留当前已连接的运行时 VM（切勿断开/重置运行时）**，避免重复下载数十 GB 模型。
@@ -105,5 +107,6 @@ description: Google Colab + ComfyUI + WebAsset `#studio` 远程生图与音视�
 | `ModuleNotFoundError: No module named 'torchsde'` | Cell 2 过滤 `requirements.txt` 时用了 `startswith("torch")`，误杀 `torchsde` | 必须使用精确正则 `^(?:torch\|torchvision\|torchaudio)(?:$\|[<>=!~;\s\[])` |
 | `RuntimeError: Given normalized_shape=[4096], expected input with shape [*4096], but got input of size[1, 512, 12288]` | `ComfyUI-GGUF` 的 `CLIPLoaderGGUF` 加载 Qwen3-VL GGUF 时堆叠了 3 层隐藏态（`3×4096=12288`），与 `qwen_image_2.1_turbo_int8_convrot` 的 `4096` 维不匹配 | 对 `Qwen-Image-2.1-Turbo` 统一使用原生 `CLIPLoader(type="qwen_image")` + `qwen3vl_8b_w4a8.safetensors` |
 | `FLUX.1-schnell` 对中文画出雪屋/乱码汉字 | CLIP-L/T5 不理解中文语义，且单路翻译超时会静默回退原文 | 首选 `Qwen-Image-2.1-Turbo` 原生中文；FLUX 走双路翻译回退并记录警告日志 |
-| T4（15GB VRAM）启动爆显存 | Cell 5 默认 `--highvram` | T4 固定使用 `--lowvram`；切换 A100 后再改回 `--highvram` |
+| T4（15GB VRAM）启动爆显存 | Cell 5 默认 `--highvram` | T4 固定使用 `--lowvram`；切换 A100/G4 后再改回 `--highvram` |
+| `main.py: error: unrecognized arguments: --normalvram` | ComfyUI 0.46.0 无 `--normalvram` 参数（仅支持 `--gpu-only`/`--highvram`/`--lowvram`/`--novram`/`--cpu`） | L4 等 24GB+ 卡将 `EXTRA_ARGS` 留空 `""`（默认自动管理）或降为 `--lowvram` |
 | 改完 `comfy-studio-server.mjs` 后页面仍是 404/旧行为 | 本机 `4174` 进程未重启 | 停止旧 `node webasset/server.mjs` 进程后重新拉起 daemon 再验 |
