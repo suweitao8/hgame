@@ -259,55 +259,132 @@ const VFX_ARPG_THEME_LABELS = {
   paladin: ['圣光', 1],
   arcane: ['奥术', 2],
   blood: ['猩红', 3],
+  bloody: ['猩红', 3],
+  crimson: ['猩红', 3],
+  crimsom: ['猩红', 3],
   necromancy: ['亡灵', 4],
+  necro: ['亡灵', 4],
   ice: ['寒冰', 5],
+  frost: ['寒冰', 5],
   water: ['水系', 6],
   earth: ['大地', 7],
   lightning: ['雷电', 8],
+  electric: ['雷电', 8],
   fire: ['火焰', 9],
+  flame: ['火焰', 9],
   poison: ['剧毒', 10],
+  acid: ['酸液', 10],
   nature: ['自然', 11],
+  life: ['生命', 11],
   holy: ['神圣', 12],
   demon: ['恶魔', 13],
+  demonic: ['恶魔', 13],
+  shadow: ['暗影', 14],
+  wind: ['疾风', 15],
+  storm: ['风暴', 16],
+  mana: ['魔力', 17],
+  lava: ['熔岩', 18],
+  oil: ['黑油', 19],
+  slime: ['史莱姆', 20],
+  snow: ['冰雪', 21],
 };
 
 const VFX_COLOR_SUFFIX_LABELS = {
-  green: ['绿色', 2],
-  blue: ['蓝色', 3],
-  purple: ['紫色', 4],
-  red: ['红色', 5],
-  yellow: ['黄色', 6],
-  orange: ['橙色', 7],
-  cyan: ['青色', 8],
-  teal: ['青绿', 8],
-  white: ['纯白', 9],
+  red: ['红色', 1],
+  orange: ['橙色', 2],
+  yellow: ['黄色', 3],
+  gold: ['金色', 4],
+  golden: ['金色', 4],
+  green: ['绿色', 5],
+  teal: ['青绿', 6],
+  cyan: ['青色', 7],
+  blue: ['蓝色', 8],
+  purple: ['紫色', 9],
+  violet: ['紫罗兰', 9],
   pink: ['粉色', 10],
   magenta: ['洋红', 10],
-  black: ['玄黑', 11],
-  dark: ['暗色', 11],
-  shadow: ['暗影', 11],
-  gold: ['金色', 12],
-  golden: ['金色', 12],
-  silver: ['银色', 13],
-  fire: ['火焰', 14],
-  frost: ['寒冰', 15],
-  ice: ['冰晶', 15],
-  water: ['水系', 16],
-  poison: ['剧毒', 17],
-  acid: ['酸液', 17],
-  lightning: ['雷电', 18],
-  electric: ['电弧', 18],
-  arcane: ['奥术', 19],
-  holy: ['神圣', 20],
-  light: ['圣光', 20],
-  void: ['虚空', 21],
-  blood: ['猩红', 22],
-  nature: ['自然', 23],
-  plasma: ['等离子', 24],
-  rainbow: ['彩虹', 25],
-  grey: ['灰色', 26],
-  gray: ['灰色', 26],
-  brown: ['棕色', 27],
+  white: ['纯白', 11],
+  silver: ['银色', 12],
+  grey: ['灰色', 13],
+  gray: ['灰色', 13],
+  black: ['玄黑', 14],
+  dark: ['暗色', 14],
+  brown: ['棕色', 15],
+  rainbow: ['彩虹', 16],
+  fire: ['火焰', 17],
+  frost: ['寒冰', 18],
+  ice: ['冰晶', 18],
+  water: ['水系', 19],
+  poison: ['剧毒', 20],
+  acid: ['酸液', 20],
+  lightning: ['雷电', 21],
+  electric: ['电弧', 21],
+  arcane: ['奥术', 22],
+  holy: ['神圣', 23],
+  light: ['圣光', 23],
+  void: ['虚空', 24],
+  blood: ['猩红', 25],
+  nature: ['自然', 26],
+  plasma: ['等离子', 27],
+  shadow: ['暗影', 28],
+  lava: ['熔岩', 29],
+  oil: ['黑油', 30],
+  slime: ['史莱姆', 31],
+  greenyellow: ['绿黄', 32],
+  orangegreen: ['橙绿', 33],
+  orangepurple: ['橙紫', 34],
+  col: ['彩色', 35],
+  metal: ['金属', 36],
+};
+
+const VFX_MODIFIER_LABELS = {
+  small: ['小型', 10],
+  mini: ['迷你', 11],
+  light: ['轻型', 12],
+  soft: ['柔和', 13],
+  simple: ['简约', 14],
+  medium: ['中型', 15],
+  regular: ['标准', 16],
+  normal: ['标准', 16],
+  big: ['大型', 17],
+  large: ['大型', 17],
+  heavy: ['重型', 18],
+  strong: ['强力', 18],
+  stronger: ['强化', 19],
+  extreme: ['极限', 20],
+  intense: ['强效', 20],
+  sharp: ['锐利', 21],
+  tall: ['高耸', 22],
+  fat: ['粗大', 23],
+  wide: ['宽幅', 24],
+  round: ['圆形', 25],
+  spiky: ['尖刺', 26],
+  clear: ['清澈', 27],
+  radial: ['径向', 28],
+  directional: ['定向', 29],
+  cluster: ['簇群', 30],
+  loop: ['循环', 31],
+  off: ['关闭', 32],
+  on: ['开启', 33],
+  single: ['单发', 34],
+  cast: ['施法', 35],
+  with_cast: ['含施法', 36],
+  three_phase: ['三段', 37],
+  modular: ['模块', 38],
+  smoke: ['含烟', 39],
+  calm: ['平静', 40],
+  lively: ['活跃', 41],
+  flat: ['扁平', 42],
+  aggro: ['激昂', 43],
+  additive: ['叠加', 44],
+  ab: ['透明混合', 45],
+  trail: ['拖尾', 46],
+  dirt: ['泥土', 50],
+  glass: ['玻璃', 51],
+  grass: ['草地', 52],
+  metal: ['金属', 53],
+  stone: ['石材', 54],
+  wood: ['木质', 55],
 };
 
 const VFX_PICKUP_TIER_LABELS = {
@@ -322,13 +399,176 @@ const VFX_PICKUP_TIER_LABELS = {
   ancient: ['远古·黑金', 9],
 };
 
-function collapseBenchColorVariants(items) {
-  const normalizeStem = s => String(s || '')
+function splitCamelTokens(str) {
+  return String(str || '')
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+    .replace(/[_-]+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+function normalizeVariantStem(s) {
+  return String(s || '')
+    .replace(/^\d+\)\s*/, '')
     .replace(/\s+(?:Thingy|Stuff)$/i, '')
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '');
+}
+
+function classifyNonPilotoVariant(it) {
+  const rel = String(it.relSource || '');
+  const parts = rel.split('/');
+  const fileName = String(it.name || it.effectId || '').trim();
+  const dirParts = parts.slice(0, -1);
+  const dirStr = dirParts.join('/');
+
+  if (it.bundleId === 'epic_toon_fx') {
+    if (dirStr === 'Combat/Explosions (Text)') {
+      return { key: 'etfx:text_explosion', baseName: 'Text Explosion', variantLabel: fileName, prio: 10 };
+    }
+    if (dirStr === 'Combat/Explosions/FruitExplosion') {
+      return { key: 'etfx:fruit_explosion', baseName: 'Fruit Explosion', variantLabel: fileName.replace(/Explosion$/i, '') || fileName, prio: 10 };
+    }
+    if (dirStr === 'Combat/Missiles/Fruit') {
+      return { key: 'etfx:fruit_missile', baseName: 'Fruit Missile', variantLabel: fileName.replace(/Missile$/i, '') || fileName, prio: 10 };
+    }
+    if (dirStr.startsWith('Interactive/Powerups/PowerBox/')) {
+      const style = dirParts[3] || 'Default';
+      const icon = fileName.replace(/^Powerbox(?:Pickup)?(?:Col|Metal)?/i, '') || fileName;
+      return { key: `etfx:powerbox:${normalizeVariantStem(style)}`, baseName: `PowerBox (${style})`, variantLabel: icon, prio: 10 };
+    }
+    if (dirStr === 'Combat/Death/Skulls' || dirStr === 'Combat/Death/Souls') {
+      const isSoul = dirStr.endsWith('Souls');
+      const lbl = fileName.replace(/^Soul/i, '').replace(/Death$/i, '') || fileName;
+      return { key: `etfx:death:${isSoul ? 'soul' : 'skull'}`, baseName: isSoul ? 'Soul Death' : 'Skull Death', variantLabel: lbl, prio: 10 };
+    }
+    if (dirStr === 'Interactive/Warning') {
+      return { key: 'etfx:warning', baseName: 'Warning', variantLabel: fileName.replace(/^Warning/i, '') || fileName, prio: 10 };
+    }
+    if (dirParts[0] === 'Combat' && dirParts[1] === 'Blood' && dirParts[2]) {
+      const colorDir = dirParts[2];
+      const colorMap = { Red: ['红血', 1], Green: ['绿血', 2], Yellow: ['黄血', 3], Water: ['水花', 4] };
+      const [cLbl, cPrio] = colorMap[colorDir] || [colorDir, 9];
+      let stem = fileName.replace(/^(Green|Yellow)?Blood/i, 'Blood').replace(/^Water/i, 'Blood');
+      let numLbl = '';
+      const nm = stem.match(/^(.+?)(\d+)$/);
+      if (nm) {
+        stem = nm[1];
+        numLbl = ` #${nm[2]}`;
+      }
+      return {
+        key: `etfx:blood:${normalizeVariantStem(stem)}`,
+        baseName: stem,
+        variantLabel: `${cLbl}${numLbl}`,
+        prio: cPrio * 10 + (nm ? Number(nm[2]) : 0),
+      };
+    }
+    if (dirParts[0] === 'Environment' && dirParts[1] === 'Fog' && dirParts[2]) {
+      const colorDir = dirParts[2];
+      const [cLbl, cPrio] = VFX_COLOR_SUFFIX_LABELS[colorDir.toLowerCase()] || [colorDir, 9];
+      const stem = fileName.replace(/(Black|Grey|Gray|White)$/i, '');
+      return { key: `etfx:fog:${normalizeVariantStem(stem)}`, baseName: stem, variantLabel: cLbl, prio: cPrio };
+    }
+    if (dirParts[0] === 'Environment' && dirParts[1] === 'Smoke' && (dirParts[2] === 'Dark' || dirParts[2] === 'White')) {
+      const colorDir = dirParts[2];
+      const [cLbl, cPrio] = VFX_COLOR_SUFFIX_LABELS[colorDir.toLowerCase()] || [colorDir, 9];
+      let stem = fileName.replace(/(Dark|White)/i, '');
+      const extra = [];
+      const nm = stem.match(/^(.+?)(\d+)$/);
+      if (nm) {
+        stem = nm[1];
+        extra.push(`#${nm[2]}`);
+      }
+      return {
+        key: `etfx:smoke:${normalizeVariantStem(stem)}`,
+        baseName: stem,
+        variantLabel: [cLbl, ...extra].join('·'),
+        prio: cPrio * 10 + (nm ? Number(nm[2]) : 0),
+      };
+    }
+    if (dirStr === 'Interactive/Money/Coins') {
+      const cm = fileName.match(/^(Gold|Silver)(Coin.+)$/i);
+      if (cm && VFX_COLOR_SUFFIX_LABELS[cm[1].toLowerCase()]) {
+        const [cLbl, cPrio] = VFX_COLOR_SUFFIX_LABELS[cm[1].toLowerCase()];
+        return { key: `etfx:coins:${normalizeVariantStem(cm[2])}`, baseName: cm[2], variantLabel: cLbl, prio: cPrio };
+      }
+    }
+  }
+
+  const tokens = splitCamelTokens(fileName);
+  const removed = [];
+  let prio = 1;
+  while (tokens.length > 1) {
+    const last = tokens[tokens.length - 1];
+    const lower = last.toLowerCase();
+    if (tokens.length > 2) {
+      const pair = tokens[tokens.length - 2].toLowerCase() + lower;
+      if (VFX_COLOR_SUFFIX_LABELS[pair]) {
+        removed.unshift(VFX_COLOR_SUFFIX_LABELS[pair][0]);
+        prio += VFX_COLOR_SUFFIX_LABELS[pair][1];
+        tokens.splice(-2, 2);
+        continue;
+      }
+    }
+    if (/^\d+$/.test(last)) {
+      removed.unshift(`#${Number(last)}`);
+      prio += Number(last);
+      tokens.pop();
+      continue;
+    }
+    if (VFX_COLOR_SUFFIX_LABELS[lower]) {
+      removed.unshift(VFX_COLOR_SUFFIX_LABELS[lower][0]);
+      prio += VFX_COLOR_SUFFIX_LABELS[lower][1];
+      tokens.pop();
+      continue;
+    }
+    if (VFX_MODIFIER_LABELS[lower]) {
+      removed.unshift(VFX_MODIFIER_LABELS[lower][0]);
+      prio += VFX_MODIFIER_LABELS[lower][1];
+      tokens.pop();
+      continue;
+    }
+    const dm = last.match(/^([A-Za-z]+?)(\d+)$/);
+    if (dm && dm[1].length >= 2) {
+      removed.unshift(`#${Number(dm[2])}`);
+      prio += Number(dm[2]);
+      tokens[tokens.length - 1] = dm[1];
+      continue;
+    }
+    break;
+  }
+
+  if (tokens.length >= 3 && tokens[tokens.length - 1].toLowerCase() === 'elemental') {
+    const elem = tokens[tokens.length - 2].toLowerCase();
+    if (VFX_ARPG_THEME_LABELS[elem]) {
+      removed.unshift(VFX_ARPG_THEME_LABELS[elem][0]);
+      prio += VFX_ARPG_THEME_LABELS[elem][1];
+      tokens.splice(tokens.length - 2, 1);
+    }
+  }
+  if (tokens.length >= 3 && tokens[tokens.length - 1].toLowerCase() === 'trail') {
+    const col = tokens[tokens.length - 2].toLowerCase();
+    if (VFX_COLOR_SUFFIX_LABELS[col]) {
+      removed.unshift(VFX_COLOR_SUFFIX_LABELS[col][0]);
+      prio += VFX_COLOR_SUFFIX_LABELS[col][1];
+      tokens.splice(tokens.length - 2, 1);
+    }
+  }
+
+  const baseName = tokens.join('') || fileName;
+  return {
+    key: `bnd:${it.packId}:${normalizeVariantStem(dirStr)}:${normalizeVariantStem(baseName)}`,
+    baseName,
+    variantLabel: removed.length > 0 ? removed.join('·') : '默认',
+    prio: removed.length === 0 ? 0 : prio,
+  };
+}
+
+function collapseBenchColorVariants(items) {
   const groups = new Map();
   const put = (key, entry) => {
     if (!groups.has(key)) groups.set(key, []);
@@ -336,14 +576,32 @@ function collapseBenchColorVariants(items) {
   };
 
   for (const it of items) {
-    const name = String(it.name || it.effectId || '').trim();
-    const lc = Number(it.layerCount || 0);
+    if (it.bundleId && it.bundleId !== 'piloto_studio') {
+      const grouped = classifyNonPilotoVariant(it);
+      put(grouped.key, {
+        it,
+        baseName: grouped.baseName,
+        variantLabel: grouped.variantLabel,
+        prio: grouped.prio,
+      });
+      continue;
+    }
+
+    const rawName = String(it.name || it.effectId || '').trim();
+    const name = rawName.replace(/^\d+\)\s*/, '').replace(/\s+(?:Thingy|Stuff)$/i, '').trim();
     let m;
 
     if (it.packId === 'arpg_realistic_golden_spells') {
       const isSilver = /^Silver_/i.test(name);
-      const base = name.replace(/^Silver_/i, '');
-      put(`silver:${normalizeStem(base)}`, { it, baseName: base, variantLabel: isSilver ? '银色' : '金色', prio: isSilver ? 2 : 1 });
+      let base = name.replace(/^Silver_/i, '');
+      const labels = [isSilver ? '银色' : '金色'];
+      let prio = isSilver ? 10 : 1;
+      if (/_Single$/i.test(base)) {
+        base = base.replace(/_Single$/i, '');
+        labels.push('单发');
+        prio += 1;
+      }
+      put(`silver:${normalizeVariantStem(base)}`, { it, baseName: base, variantLabel: labels.join('·'), prio });
       continue;
     }
 
@@ -354,7 +612,7 @@ function collapseBenchColorVariants(items) {
         put('pickup_chest', { it, baseName: 'Chest Loot', variantLabel: label, prio });
         continue;
       }
-      const pm = name.match(/^\d+\)\s+([A-Za-z]+)\s+[A-Za-z]+$/);
+      const pm = rawName.match(/^\d+\)\s+([A-Za-z]+)\s+[A-Za-z]+$/);
       if (pm && VFX_PICKUP_TIER_LABELS[pm[1].toLowerCase()]) {
         const [label, prio] = VFX_PICKUP_TIER_LABELS[pm[1].toLowerCase()];
         put('pickup_orb', { it, baseName: 'Pickup Loot', variantLabel: label, prio });
@@ -364,24 +622,48 @@ function collapseBenchColorVariants(items) {
 
     if ((m = name.match(/^ARPG_([A-Za-z]+)_+(.+)$/)) && VFX_ARPG_THEME_LABELS[m[1].toLowerCase()]) {
       const themeKey = m[1].toLowerCase();
-      const skill = m[2];
-      const [label, prio] = VFX_ARPG_THEME_LABELS[themeKey];
+      let skill = m[2];
+      const [tLbl, tPrio] = VFX_ARPG_THEME_LABELS[themeKey];
+      const labels = [tLbl];
+      let prio = tPrio * 10;
+      const sm = skill.match(/^(.+?)_(With_Cast|Three_Phase|Cast|Stronger|Simple|Loop|Off|\d+)$/i);
+      if (sm) {
+        skill = sm[1];
+        const modKey = sm[2].toLowerCase();
+        if (/^\d+$/.test(modKey)) {
+          labels.push(`#${Number(modKey)}`);
+          prio += Number(modKey);
+        } else if (VFX_MODIFIER_LABELS[modKey]) {
+          labels.push(VFX_MODIFIER_LABELS[modKey][0]);
+          prio += VFX_MODIFIER_LABELS[modKey][1];
+        }
+      }
       const isDouble = m[0].includes('__');
       const key = isDouble
-        ? `essentials_or_arcane:${normalizeStem(skill)}:${lc}`
-        : `arpg:${normalizeStem(skill)}:${lc}`;
-      put(key, { it, baseName: isDouble ? skill : `ARPG_${skill}`, variantLabel: label, prio });
+        ? `essentials_or_arcane:${normalizeVariantStem(skill)}`
+        : `arpg:${normalizeVariantStem(skill)}`;
+      put(key, { it, baseName: isDouble ? skill : `ARPG_${skill}`, variantLabel: labels.join('·'), prio });
       continue;
     }
 
     if (it.packId === 'arpg_realistic_essentials_fire') {
-      const gm = name.match(/^(.+?)_green$/i);
-      const skill = gm ? gm[1] : name;
-      put(`essentials_or_arcane:${normalizeStem(skill)}:${lc}`, {
+      let base = name;
+      const isGreen = /_green$/i.test(base);
+      if (isGreen) base = base.replace(/_green$/i, '');
+      const labels = [isGreen ? '绿色' : '火焰'];
+      let prio = isGreen ? 20 : 1;
+      const sm = base.match(/^(.+?)_(Light|Heavy|Strong|Small|Big)$/i);
+      if (sm && VFX_MODIFIER_LABELS[sm[2].toLowerCase()]) {
+        base = sm[1];
+        const [mLbl, mPrio] = VFX_MODIFIER_LABELS[sm[2].toLowerCase()];
+        labels.push(mLbl);
+        prio += mPrio;
+      }
+      put(`essentials_or_arcane:${normalizeVariantStem(base)}`, {
         it,
-        baseName: skill,
-        variantLabel: gm ? '绿色' : '火焰',
-        prio: gm ? 3 : 1,
+        baseName: base,
+        variantLabel: labels.join('·'),
+        prio,
       });
       continue;
     }
@@ -389,7 +671,7 @@ function collapseBenchColorVariants(items) {
     if ((it.packId === 'arpg_realistic_ice_and_water_pack' || it.packId === 'arpg_realistic_demon_vs_angels')
       && (m = name.match(/^(Ice|Water|Holy|Demon)[_ ]+(.+)$/i))) {
       const [label, prio] = VFX_ARPG_THEME_LABELS[m[1].toLowerCase()];
-      put(`packtheme:${it.packId}:${normalizeStem(m[2])}`, {
+      put(`packtheme:${it.packId}:${normalizeVariantStem(m[2])}`, {
         it,
         baseName: m[2],
         variantLabel: label,
@@ -398,53 +680,45 @@ function collapseBenchColorVariants(items) {
       continue;
     }
 
-    if (it.bundleId && it.bundleId !== 'piloto_studio') {
-      const relDir = String(it.relSource || '').split('/').slice(0, -1).join('/');
-      if ((m = name.match(/^(.+?)[_ -]+([A-Za-z]+)$/)) && VFX_COLOR_SUFFIX_LABELS[m[2].toLowerCase()]) {
-        const [label, prio] = VFX_COLOR_SUFFIX_LABELS[m[2].toLowerCase()];
-        put(`bnd:${it.packId}:${relDir}:${normalizeStem(m[1])}:${lc}`, {
-          it,
-          baseName: m[1].trim(),
-          variantLabel: label,
-          prio,
-        });
+    let base = name;
+    const labels = [];
+    let prio = 0;
+    let changed = true;
+    while (changed) {
+      changed = false;
+      let sm;
+      if ((sm = base.match(/^(.+?)[_ -]+([A-Za-z]+)$/)) && VFX_COLOR_SUFFIX_LABELS[sm[2].toLowerCase()]) {
+        const [cLbl, cPrio] = VFX_COLOR_SUFFIX_LABELS[sm[2].toLowerCase()];
+        labels.unshift(cLbl);
+        prio += cPrio * 10;
+        base = sm[1].trim();
+        changed = true;
         continue;
       }
-      if ((m = name.match(/^(.+?)([A-Z][a-z]+)$/)) && m[1].length >= 3 && VFX_COLOR_SUFFIX_LABELS[m[2].toLowerCase()]) {
-        const [label, prio] = VFX_COLOR_SUFFIX_LABELS[m[2].toLowerCase()];
-        put(`bnd:${it.packId}:${relDir}:${normalizeStem(m[1])}:${lc}`, {
-          it,
-          baseName: m[1].trim(),
-          variantLabel: label,
-          prio,
-        });
+      if ((sm = base.match(/^(.+?)[_ -]+(With_Cast|Three_Phase|Loop|Off|Stronger|Heavy|Light|Strong|Small|Big|Simple|Single|Cast)$/i))) {
+        const modInfo = VFX_MODIFIER_LABELS[sm[2].toLowerCase()];
+        if (modInfo) {
+          labels.unshift(modInfo[0]);
+          prio += modInfo[1];
+          base = sm[1].trim();
+          changed = true;
+          continue;
+        }
+      }
+      if ((sm = base.match(/^(.+?)[_ -]+(\d+)$/))) {
+        labels.unshift(`#${Number(sm[2])}`);
+        prio += Number(sm[2]);
+        base = sm[1].trim();
+        changed = true;
         continue;
       }
-      put(`bnd:${it.packId}:${relDir}:${normalizeStem(name)}:${lc}`, {
-        it,
-        baseName: name,
-        variantLabel: '默认',
-        prio: 1,
-      });
-      continue;
     }
 
-    if ((m = name.match(/^(.+?)[_ -]+([A-Za-z]+)$/)) && VFX_COLOR_SUFFIX_LABELS[m[2].toLowerCase()]) {
-      const [label, prio] = VFX_COLOR_SUFFIX_LABELS[m[2].toLowerCase()];
-      put(`suf:${it.packId}:${normalizeStem(m[1])}:${lc}`, {
-        it,
-        baseName: m[1].replace(/\s+(?:Thingy|Stuff)$/i, '').trim(),
-        variantLabel: label,
-        prio,
-      });
-      continue;
-    }
-
-    put(`suf:${it.packId}:${normalizeStem(name)}:${lc}`, {
+    put(`suf:${it.packId}:${normalizeVariantStem(base)}`, {
       it,
-      baseName: name,
-      variantLabel: '默认',
-      prio: 1,
+      baseName: base,
+      variantLabel: labels.length > 0 ? labels.join('·') : '默认',
+      prio,
     });
   }
 
@@ -459,11 +733,22 @@ function collapseBenchColorVariants(items) {
       });
       continue;
     }
+    const labelCounts = new Map();
+    for (const entry of arr) {
+      labelCounts.set(entry.variantLabel, (labelCounts.get(entry.variantLabel) || 0) + 1);
+    }
     const head = arr[0];
     collapsed.push({
       ...head.it,
       name: head.baseName,
-      variants: arr.map(entry => ({ ...entry.it, variantLabel: entry.variantLabel })),
+      variants: arr.map(entry => {
+        const dup = (labelCounts.get(entry.variantLabel) || 0) > 1;
+        const raw = entry.it.name || entry.it.id;
+        return {
+          ...entry.it,
+          variantLabel: dup ? `${entry.variantLabel} (${raw})` : entry.variantLabel,
+        };
+      }),
     });
   }
   return collapsed;
@@ -764,10 +1049,11 @@ function renderList() {
       const baseBadge = item.kind === 'system'
         ? (item.sourceType === 'niagara' ? 'NS' : 'VFX')
         : (item.kind === 'mesh' ? '3D' : 'TEX');
+      const variantBadge = item.variants?.length > 1 ? `×${item.variants.length}` : baseBadge;
       const { button } = createSidebarSquareCard({
         name: item.name || item.id,
         thumbUrl: item.kind === 'texture' ? item.url : (item.thumbnail || ''),
-        badge: reviewed ? '✓' : baseBadge,
+        badge: reviewed ? '✓' : variantBadge,
         accentColor: reviewed ? '#4ade80' : (item.kind === 'system' ? (item.hgamePreset?.color || '#d5e4b4') : ''),
         active: selected,
         className: reviewed ? 'hgame-list-item is-reviewed' : 'hgame-list-item',
@@ -1358,8 +1644,10 @@ function syncControlsVisibility(item) {
   if (reviewToggle) reviewToggle.checked = isItemReviewed(item);
   if (variantWrap && variantSelect) {
     const variants = Array.isArray(item?.variants) ? item.variants : [];
+    const variantLabelEl = variantWrap.querySelector('span');
     if (variants.length > 1) {
       const activeVar = getActiveVariant(item);
+      if (variantLabelEl) variantLabelEl.textContent = `变种 (${variants.length})`;
       variantSelect.replaceChildren();
       for (const v of variants) {
         const opt = document.createElement('option');
@@ -1370,6 +1658,7 @@ function syncControlsVisibility(item) {
       variantSelect.value = activeVar?.id || variants[0].id;
       variantWrap.hidden = false;
     } else {
+      if (variantLabelEl) variantLabelEl.textContent = '变种';
       variantSelect.replaceChildren();
       variantWrap.hidden = true;
     }

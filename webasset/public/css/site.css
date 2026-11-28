@@ -1842,7 +1842,7 @@ button { color: inherit; }
   display: none;
 }
 #hgame-vfx-variant-wrap select {
-  max-width: 148px;
+  max-width: 180px;
 }
 .hgame-stage-title-group .hgame-switch {
   padding: 4px 10px;
