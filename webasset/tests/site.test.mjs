@@ -248,6 +248,9 @@ test('two generation modes produce different modelling briefs', () => {
     assert.doesNotMatch(standard, rule);
   }
   assert.match(standard, /保留参考图中的斗篷、裙长和袖口/);
+  assert.match(standard, /采用自然的中式面孔/);
+  assert.match(standard, /保留原有的非人类面部结构/);
+  assert.doesNotMatch(humanoid, /采用自然的中式面孔/);
   assert.match(humanoid, /直立|两足|双足/);
   assert.match(humanoid, /#333333/);
   assert.match(humanoid, /严禁纯白/);

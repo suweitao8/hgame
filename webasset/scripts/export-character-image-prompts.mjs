@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildCharacterSheetPrompt } from '../lib/character-image-prompt.mjs';
+import { buildCharacterSheetPrompt, FILM_FACE_RULE } from '../lib/character-image-prompt.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const catalogPath = path.join(root, 'assets', 'characters', 'index.json');
@@ -70,6 +70,7 @@ const lines = [
   '',
   `> 根据角色库自动生成；更新角色资料或生成状态后，运行 \`npm run prompts:export\` 刷新本文件。`,
   '> **标准传递：** 生成影视图时输入全部原始参考图；生成模型图时只输入当前影视 AI 定稿图，不得混入原始参考图。没有影视图时先生成影视图。',
+  `> **影视面孔：** ${FILM_FACE_RULE}`,
   '> 两种形态统一使用纯色哑光深灰背景 RGB(51, 51, 51) / #333333，禁止白色、浅灰、透明背景。',
   '> **纯角色规则：** 所有武器、道具、食物、工具、手持物及周边独立物件均不得进入生成图；角色资料中的道具字段仅供文字设定参考，不参与生图。',
   '',
