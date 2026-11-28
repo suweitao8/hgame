@@ -690,9 +690,21 @@ export function createComfyStudioHandler({
           ['bf16', 'fp16'],
         );
 
+        const requestedModel = String(body?.model || '').toLowerCase();
+        const hasZImage = Boolean(zImageUnet && zImageClip && zImageVae);
+        const hasSdxl = Boolean(sdxlCkpt);
+        const hasQwen = Boolean(qwenUnet && qwenClip && qwenVae);
+        let selectedBackend = '';
+        if (requestedModel === 'sdxl' && hasSdxl) selectedBackend = 'sdxl';
+        else if (requestedModel === 'zimage' && hasZImage) selectedBackend = 'zimage';
+        else if (requestedModel === 'qwen' && hasQwen) selectedBackend = 'qwen';
+        else if (hasZImage && !['sdxl', 'qwen'].includes(requestedModel)) selectedBackend = 'zimage';
+        else if (hasSdxl && requestedModel !== 'qwen') selectedBackend = 'sdxl';
+        else if (hasQwen) selectedBackend = 'qwen';
+
         let effectivePrompt = prompt;
         let graph;
-        if (zImageUnet && zImageClip && zImageVae && !['sdxl', 'qwen'].includes(body?.model)) {
+        if (selectedBackend === 'zimage') {
           graph = buildZImageTurboPrompt({
             unetName: zImageUnet,
             clipName: zImageClip,
@@ -703,7 +715,7 @@ export function createComfyStudioHandler({
             steps: body?.steps ?? 9,
             seed: body?.seed,
           });
-        } else if (sdxlCkpt && body?.model !== 'qwen') {
+        } else if (selectedBackend === 'sdxl') {
           const isLightning = /lightning|turbo/i.test(sdxlCkpt);
           effectivePrompt = await translatePromptToEnglish(prompt, fetchImpl);
           graph = buildSdxlRealisticImagePrompt({
@@ -717,7 +729,7 @@ export function createComfyStudioHandler({
             scheduler: 'karras',
             seed: body?.seed,
           });
-        } else if (qwenUnet && qwenClip && qwenVae) {
+        } else if (selectedBackend === 'qwen') {
           graph = buildQwenImage21Prompt({
             unetName: qwenUnet,
             clipName: qwenClip,

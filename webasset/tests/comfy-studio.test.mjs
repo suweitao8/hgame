@@ -267,6 +267,7 @@ test('WebAsset studio API connects to ComfyUI, generates image + video, and serv
   assert.match(html, /id="nav-studio"/);
   assert.match(html, /data-workspace="studio"/);
   assert.match(html, /id="studio-view"/);
+  assert.match(html, /id="studio-img-model"/);
   assert.match(html, /id="studio-detail-prompt"/);
   assert.doesNotMatch(html, /id="studio-connect-btn"|id="studio-comfy-url"/);
 
@@ -712,6 +713,24 @@ test('WebAsset studio prefers Z-Image-Turbo with raw Chinese prompt and lumina2 
     assert.equal(submitted[0]['8'].inputs.sampler_name, 'res_multistep');
     assert.equal(submitted[0]['8'].inputs.scheduler, 'simple');
     assert.equal(submitted[0]['8'].inputs.steps, 9);
+
+    // Explicit model='sdxl' selects RealVisXL even when Z-Image-Turbo is installed
+    const resSdxl = await (await fetch(`${base}/api/comfy/generate/image`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: 'beach portrait', model: 'sdxl', width: 1024, height: 1024 }),
+    })).json();
+    assert.equal(resSdxl.promptId, 'zimg-pid-2');
+    assert.equal(submitted[1]['1'].inputs.ckpt_name, 'RealVisXL_V5.0_Lightning_fp16.safetensors');
+
+    // Explicit model='zimage' selects Z-Image-Turbo
+    const resZimg = await (await fetch(`${base}/api/comfy/generate/image`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: '海边夕阳下的写实人像', model: 'zimage', width: 1024, height: 1024 }),
+    })).json();
+    assert.equal(resZimg.promptId, 'zimg-pid-3');
+    assert.equal(submitted[2]['1'].inputs.unet_name, 'z_image_turbo_bf16.safetensors');
   } finally {
     server.closeAllConnections?.();
     mockComfy.closeAllConnections?.();

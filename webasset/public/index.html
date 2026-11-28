@@ -19,6 +19,7 @@
   <script type="module" src="./js/hgame-audio.js"></script>
   <script type="module" src="./js/hgame-music.js"></script>
   <script type="module" src="./js/hgame-tests.js"></script>
+  <script type="module" src="./js/hgame-studio.js"></script>
 </head>
 <body>
   <header class="site-header">
@@ -37,6 +38,7 @@
       <button type="button" class="nav-tab" id="nav-audio" data-workspace="audio" role="tab" aria-controls="audio-view" aria-selected="false" tabindex="-1">音效</button>
       <button type="button" class="nav-tab" id="nav-music" data-workspace="music" role="tab" aria-controls="music-view" aria-selected="false" tabindex="-1">音乐</button>
       <button type="button" class="nav-tab" id="nav-tests" data-workspace="tests" role="tab" aria-controls="tests-view" aria-selected="false" tabindex="-1">测试</button>
+      <button type="button" class="nav-tab" id="nav-studio" data-workspace="studio" role="tab" aria-controls="studio-view" aria-selected="false" tabindex="-1">生成</button>
     </nav>
   </header>
 
@@ -729,6 +731,74 @@
         </div>
       </div>
       <div id="hgame-test-hotbar" class="hgame-test-hotbar" hidden aria-label="2D 物品图标图集预览"></div>
+    </section>
+  </main>
+
+  <main id="studio-view" class="workspace-layout hgame-layout studio-layout" aria-label="AI 生成" hidden>
+    <aside class="workspace-sidebar hgame-sidebar" aria-label="生成记录">
+      <nav id="studio-history-list" class="hgame-asset-list" aria-label="生成记录"></nav>
+    </aside>
+    <section class="hgame-stage-panel" aria-label="生成舞台">
+      <div class="hgame-stage-header">
+        <div class="hgame-stage-actions">
+          <div class="character-mode-tabs" role="tablist" aria-label="生成模式">
+            <button type="button" class="character-mode-tab studio-mode-tab" role="tab" data-studio-mode="image" aria-selected="true" tabindex="0">生图</button>
+            <button type="button" class="character-mode-tab studio-mode-tab" role="tab" data-studio-mode="video" aria-selected="false" tabindex="-1">MiniMax H3</button>
+          </div>
+          <button id="studio-to-video" type="button" class="asset-model-action" hidden>转视频</button>
+        </div>
+      </div>
+      <div class="hgame-viewport studio-viewport">
+        <div id="studio-detail-prompt" class="studio-detail-prompt" hidden></div>
+        <div id="studio-media-slot" class="studio-media-slot">
+          <div id="studio-empty" class="hgame-empty">输入提示词生成</div>
+          <img id="studio-preview-img" class="studio-preview-media" alt="生成图片" hidden>
+          <video id="studio-preview-video" class="studio-preview-media" controls loop playsinline hidden></video>
+        </div>
+      </div>
+      <div class="hgame-controls studio-controls">
+        <textarea id="studio-prompt" class="studio-prompt" rows="2" placeholder="提示词" aria-label="提示词"></textarea>
+        <div id="studio-img-controls" class="hgame-control-group">
+          <label class="hgame-field"><span>模型</span>
+            <select id="studio-img-model">
+              <option value="sdxl" selected>RealVisXL</option>
+              <option value="zimage">Z-Image</option>
+              <option value="qwen">Qwen2.1</option>
+            </select>
+          </label>
+          <label class="hgame-field"><span>尺寸</span>
+            <select id="studio-img-size">
+              <option value="1024x1024" selected>1024×1024</option>
+              <option value="1280x720">1280×720</option>
+              <option value="720x1280">720×1280</option>
+            </select>
+          </label>
+        </div>
+        <div id="studio-vid-controls" class="hgame-control-group" hidden>
+          <label class="asset-model-action studio-ref-pick">参考图<input id="studio-video-image" type="file" accept="image/*" hidden></label>
+          <span id="studio-ref-preview-wrap" class="studio-ref-preview-wrap" hidden>
+            <img id="studio-ref-preview" class="studio-ref-thumb" alt="参考图">
+            <button id="studio-ref-clear" type="button" class="studio-ref-clear" aria-label="清除参考图">✕</button>
+          </span>
+          <label class="hgame-field"><span>时长</span>
+            <select id="studio-vid-duration">
+              <option value="3" selected>3s</option>
+              <option value="5">5s</option>
+            </select>
+          </label>
+          <label class="hgame-field"><span>画幅</span>
+            <select id="studio-vid-size">
+              <option value="608x352" selected>608×352</option>
+              <option value="864x480">864×480</option>
+              <option value="1280x736">1280×736</option>
+            </select>
+          </label>
+        </div>
+        <div class="hgame-control-group studio-submit-group">
+          <span id="studio-status" class="hgame-status-text" role="status" aria-live="polite"></span>
+          <button id="studio-submit" type="button" class="asset-ai-generate-button">生成</button>
+        </div>
+      </div>
     </section>
   </main>
 </body>
