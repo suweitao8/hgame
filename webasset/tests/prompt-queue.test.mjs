@@ -39,6 +39,8 @@ test('replaced white-background dog image is no longer queued for regeneration',
   assert.match(filmSection, /### 影视图生成流程/);
   assert.match(filmSection, /以原始参考图为外观依据/);
   assert.match(filmSection, /先为该角色定五官/);
+  assert.match(filmSection, /直接生成该角色的独立六视图/);
+  assert.doesNotMatch(filmSection, /试脸图/);
   assert.match(filmSection, /遮住发型和服装后/);
   assert.match(filmSection, /旧稿仅用于保留已通过的部分/);
   assert.match(filmSection, /影视稿确认后再进入模型图/);

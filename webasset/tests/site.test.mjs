@@ -253,6 +253,8 @@ test('two generation modes produce different modelling briefs', () => {
   assert.match(standard, /眼形、眼距和眉眼神态/);
   assert.match(standard, /根据角色身份、外貌年龄感和性格确定五官/);
   assert.match(standard, /脸长与脸宽、颧颊、下颌与下巴、眉眼、鼻型和唇形/);
+  assert.match(standard, /眼神平静，嘴角放松/);
+  assert.match(standard, /保留角色的俊美或漂亮/);
   assert.doesNotMatch(humanoid, /根据角色身份、外貌年龄感和性格确定五官/);
   assert.match(standard, /保留原有身高感和头身比例/);
   assert.doesNotMatch(humanoid, /保留原有身高感和头身比例/);
