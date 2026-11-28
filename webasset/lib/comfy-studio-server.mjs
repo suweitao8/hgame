@@ -141,6 +141,68 @@ export function buildFluxImagePrompt({
   };
 }
 
+const DEFAULT_SDXL_NEGATIVE_PROMPT = '(octane render, render, drawing, anime, bad photo, bad photography:1.3), (worst quality, low quality, blurry:1.2), (bad teeth, deformed teeth, deformed lips), (bad anatomy, bad proportions:1.1), (deformed iris, deformed pupils), (deformed eyes, bad eyes), (deformed face, ugly face, bad face), (deformed hands, bad hands, fused fingers), morbid, mutilated, mutation, disfigured';
+
+export function buildSdxlRealisticImagePrompt({
+  ckptName,
+  prompt,
+  negativePrompt = DEFAULT_SDXL_NEGATIVE_PROMPT,
+  width = 1024,
+  height = 1024,
+  steps = 6,
+  cfg = 1.8,
+  samplerName = 'dpmpp_sde',
+  scheduler = 'karras',
+  seed,
+}) {
+  const resolvedSeed = Number.isFinite(Number(seed)) ? Math.trunc(Number(seed)) : Math.floor(Math.random() * 2 ** 31);
+  return {
+    '1': {
+      class_type: 'CheckpointLoaderSimple',
+      inputs: { ckpt_name: ckptName },
+    },
+    '2': {
+      class_type: 'CLIPTextEncode',
+      inputs: { clip: ['1', 1], text: String(prompt || '') },
+    },
+    '3': {
+      class_type: 'CLIPTextEncode',
+      inputs: { clip: ['1', 1], text: String(negativePrompt ?? '') },
+    },
+    '4': {
+      class_type: 'EmptyLatentImage',
+      inputs: {
+        width: Math.max(64, Math.round(Number(width) || 1024)),
+        height: Math.max(64, Math.round(Number(height) || 1024)),
+        batch_size: 1,
+      },
+    },
+    '5': {
+      class_type: 'KSampler',
+      inputs: {
+        model: ['1', 0],
+        positive: ['2', 0],
+        negative: ['3', 0],
+        latent_image: ['4', 0],
+        seed: resolvedSeed,
+        steps: Math.max(1, Math.round(Number(steps) || 6)),
+        cfg: Number.isFinite(Number(cfg)) ? Number(cfg) : 1.8,
+        sampler_name: samplerName,
+        scheduler,
+        denoise: 1.0,
+      },
+    },
+    '6': {
+      class_type: 'VAEDecode',
+      inputs: { samples: ['5', 0], vae: ['1', 2] },
+    },
+    '7': {
+      class_type: 'SaveImage',
+      inputs: { images: ['6', 0], filename_prefix: 'studio/realvis' },
+    },
+  };
+}
+
 export function buildQwenImage21Prompt({
   unetName,
   clipName,
@@ -208,6 +270,77 @@ export function buildQwenImage21Prompt({
     '9': {
       class_type: 'SaveImage',
       inputs: { images: ['8', 0], filename_prefix: 'studio/qwen21' },
+    },
+  };
+}
+
+export function buildZImageTurboPrompt({
+  unetName,
+  clipName,
+  vaeName,
+  prompt,
+  width = 1024,
+  height = 1024,
+  steps = 9,
+  shift = 3.0,
+  seed,
+}) {
+  const resolvedSeed = Number.isFinite(Number(seed)) ? Math.trunc(Number(seed)) : Math.floor(Math.random() * 2 ** 31);
+  return {
+    '1': {
+      class_type: 'UNETLoader',
+      inputs: { unet_name: unetName, weight_dtype: 'default' },
+    },
+    '2': {
+      class_type: 'ModelSamplingAuraFlow',
+      inputs: { model: ['1', 0], shift: Number.isFinite(Number(shift)) ? Number(shift) : 3.0 },
+    },
+    '3': {
+      class_type: 'CLIPLoader',
+      inputs: { clip_name: clipName, type: 'lumina2' },
+    },
+    '4': {
+      class_type: 'VAELoader',
+      inputs: { vae_name: vaeName },
+    },
+    '5': {
+      class_type: 'CLIPTextEncode',
+      inputs: { clip: ['3', 0], text: String(prompt || '') },
+    },
+    '6': {
+      class_type: 'ConditioningZeroOut',
+      inputs: { conditioning: ['5', 0] },
+    },
+    '7': {
+      class_type: 'EmptySD3LatentImage',
+      inputs: {
+        width: Math.max(64, Math.round(Number(width) || 1024)),
+        height: Math.max(64, Math.round(Number(height) || 1024)),
+        batch_size: 1,
+      },
+    },
+    '8': {
+      class_type: 'KSampler',
+      inputs: {
+        model: ['2', 0],
+        positive: ['5', 0],
+        negative: ['6', 0],
+        latent_image: ['7', 0],
+        seed: resolvedSeed,
+        steps: Math.max(1, Math.round(Number(steps) || 9)),
+        cfg: 1.0,
+        sampler_name: 'res_multistep',
+        scheduler: 'simple',
+        denoise: 1.0,
+      },
+    },
+    '9': {
+      class_type: 'VAEDecode',
+      inputs: { samples: ['8', 0], vae: ['4', 0] },
+    },
+    '10': {
+      class_type: 'SaveImage',
+      inputs: { images: ['9', 0], filename_prefix: 'studio/z_image_turbo' },
     },
   };
 }
@@ -528,6 +661,22 @@ export function createComfyStudioHandler({
           return;
         }
         const models = await probeComfyModels(url);
+        const zImageUnet = pickPreferred(
+          models.unets.filter((n) => n.toLowerCase().includes('z_image_turbo')),
+          ['bf16', 'int8_convrot', 'z_image_turbo'],
+        );
+        const zImageClip = pickPreferred(
+          models.clips.filter((n) => n.toLowerCase().includes('qwen_3_4b')),
+          ['qwen_3_4b.safetensors', 'qwen_3_4b'],
+        );
+        const zImageVae = pickPreferred(
+          models.vaes.filter((n) => n.toLowerCase() === 'ae.safetensors' || n.toLowerCase().endsWith('/ae.safetensors')),
+          ['ae.safetensors'],
+        );
+        const sdxlCkpt = pickPreferred(
+          models.checkpoints.filter((n) => /realvis|juggernaut|lustify|biglust|sdxl/i.test(n)),
+          ['realvisxl_v5.0_lightning', 'realvis', 'juggernaut', 'sdxl'],
+        );
         const qwenUnet = pickPreferred(
           models.unets.filter((n) => n.toLowerCase().includes('qwen_image_2.1')),
           ['turbo_int8', 'turbo', 'qwen_image_2.1'],
@@ -543,7 +692,32 @@ export function createComfyStudioHandler({
 
         let effectivePrompt = prompt;
         let graph;
-        if (qwenUnet && qwenClip && qwenVae) {
+        if (zImageUnet && zImageClip && zImageVae && !['sdxl', 'qwen'].includes(body?.model)) {
+          graph = buildZImageTurboPrompt({
+            unetName: zImageUnet,
+            clipName: zImageClip,
+            vaeName: zImageVae,
+            prompt,
+            width: body?.width,
+            height: body?.height,
+            steps: body?.steps ?? 9,
+            seed: body?.seed,
+          });
+        } else if (sdxlCkpt && body?.model !== 'qwen') {
+          const isLightning = /lightning|turbo/i.test(sdxlCkpt);
+          effectivePrompt = await translatePromptToEnglish(prompt, fetchImpl);
+          graph = buildSdxlRealisticImagePrompt({
+            ckptName: sdxlCkpt,
+            prompt: effectivePrompt,
+            width: body?.width,
+            height: body?.height,
+            steps: body?.steps ?? (isLightning ? 6 : 25),
+            cfg: isLightning ? 1.8 : 5.0,
+            samplerName: isLightning ? 'dpmpp_sde' : 'dpmpp_2m_sde',
+            scheduler: 'karras',
+            seed: body?.seed,
+          });
+        } else if (qwenUnet && qwenClip && qwenVae) {
           graph = buildQwenImage21Prompt({
             unetName: qwenUnet,
             clipName: qwenClip,

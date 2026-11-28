@@ -10,6 +10,8 @@ import {
   buildFluxImagePrompt,
   buildMiniMaxH3VideoPrompt,
   buildQwenImage21Prompt,
+  buildSdxlRealisticImagePrompt,
+  buildZImageTurboPrompt,
   snapH3Frames,
   translatePromptToEnglish,
 } from '../lib/comfy-studio-server.mjs';
@@ -117,6 +119,45 @@ test('prompt builders match ComfyUI FLUX and MiniMax H3 schemas', () => {
   assert.equal(turbo['8'].inputs.sampler_name, 'euler');
   assert.equal(turbo['9'].inputs.scheduler, 'beta');
   assert.equal(turbo['9'].inputs.steps, 8);
+
+  const sdxl = buildSdxlRealisticImagePrompt({
+    ckptName: 'RealVisXL_V5.0_Lightning_fp16.safetensors',
+    prompt: 'photorealistic beach portrait at sunset',
+    width: 896,
+    height: 1152,
+    seed: 123,
+  });
+  assert.equal(sdxl['1'].class_type, 'CheckpointLoaderSimple');
+  assert.equal(sdxl['1'].inputs.ckpt_name, 'RealVisXL_V5.0_Lightning_fp16.safetensors');
+  assert.equal(sdxl['2'].class_type, 'CLIPTextEncode');
+  assert.equal(sdxl['3'].class_type, 'CLIPTextEncode');
+  assert.match(sdxl['3'].inputs.text, /bad anatomy/);
+  assert.equal(sdxl['4'].class_type, 'EmptyLatentImage');
+  assert.equal(sdxl['5'].inputs.sampler_name, 'dpmpp_sde');
+  assert.equal(sdxl['5'].inputs.scheduler, 'karras');
+  assert.equal(sdxl['5'].inputs.steps, 6);
+  assert.equal(sdxl['5'].inputs.cfg, 1.8);
+
+  const zimg = buildZImageTurboPrompt({
+    unetName: 'z_image_turbo_bf16.safetensors',
+    clipName: 'qwen_3_4b.safetensors',
+    vaeName: 'ae.safetensors',
+    prompt: '海边夕阳下的写实人像摄影',
+    width: 1024,
+    height: 1024,
+    seed: 321,
+  });
+  assert.equal(zimg['1'].class_type, 'UNETLoader');
+  assert.equal(zimg['2'].class_type, 'ModelSamplingAuraFlow');
+  assert.equal(zimg['2'].inputs.shift, 3.0);
+  assert.equal(zimg['3'].class_type, 'CLIPLoader');
+  assert.equal(zimg['3'].inputs.type, 'lumina2');
+  assert.equal(zimg['5'].inputs.text, '海边夕阳下的写实人像摄影');
+  assert.equal(zimg['6'].class_type, 'ConditioningZeroOut');
+  assert.equal(zimg['8'].inputs.sampler_name, 'res_multistep');
+  assert.equal(zimg['8'].inputs.scheduler, 'simple');
+  assert.equal(zimg['8'].inputs.steps, 9);
+  assert.equal(zimg['8'].inputs.cfg, 1.0);
 });
 
 test('WebAsset studio API connects to ComfyUI, generates image + video, and serves outputs', async () => {
@@ -495,6 +536,182 @@ test('WebAsset studio skips generation_tail, prefers Heretic encoder, and gates 
     assert.equal(g2['8'].inputs.sampler_name, 'res_multistep');
     assert.equal(g2['9'].inputs.scheduler, 'simple');
     assert.equal(g2['9'].inputs.steps, 20);
+  } finally {
+    server.closeAllConnections?.();
+    mockComfy.closeAllConnections?.();
+    await Promise.all([
+      new Promise((resolve) => server.close(resolve)),
+      new Promise((resolve) => mockComfy.close(resolve)),
+    ]);
+    await rm(dir, { recursive: true, force: true, maxRetries: 5 });
+  }
+});
+
+test('WebAsset studio prefers realistic SDXL checkpoint with English translation and Lightning sampler when present', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'webasset-comfy-realvis-'));
+  const submitted = [];
+
+  const mockComfy = createServer(async (req, res) => {
+    const u = new URL(req.url || '/', 'http://127.0.0.1');
+    if (u.pathname === '/object_info/CheckpointLoaderSimple') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ CheckpointLoaderSimple: { input: { required: { ckpt_name: [['RealVisXL_V5.0_Lightning_fp16.safetensors']] } } } }));
+      return;
+    }
+    if (u.pathname === '/object_info/UNETLoader') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ UNETLoader: { input: { required: { unet_name: [['qwen_image_2.1_turbo_int8_convrot.safetensors']] } } } }));
+      return;
+    }
+    if (u.pathname === '/object_info/CLIPLoader') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ CLIPLoader: { input: { required: { clip_name: [['qwen3vl_8b_w4a8.safetensors']] } } } }));
+      return;
+    }
+    if (u.pathname === '/object_info/VAELoader') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ VAELoader: { input: { required: { vae_name: [['qwen_image_2.1_vae_bf16.safetensors']] } } } }));
+      return;
+    }
+    if (u.pathname === '/prompt' && req.method === 'POST') {
+      const chunks = [];
+      for await (const c of req) chunks.push(c);
+      submitted.push(JSON.parse(Buffer.concat(chunks).toString('utf8')).prompt);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ prompt_id: `realvis-pid-${submitted.length}` }));
+      return;
+    }
+    res.writeHead(404).end();
+  });
+
+  await new Promise((resolve) => mockComfy.listen(0, '127.0.0.1', resolve));
+  const comfyUrl = `http://127.0.0.1:${mockComfy.address().port}`;
+  const server = createWebAssetServer({
+    siteRoot: root,
+    imageRoot: path.join(dir, 'assets'),
+    characterCatalog: path.join(dir, 'assets', 'characters', 'index.json'),
+    gamesRoot: path.join(dir, 'games'),
+    comfyStudioCacheDir: path.join(dir, 'comfy-cache'),
+    comfyFetch: async (targetUrl, init) => {
+      if (String(targetUrl).startsWith('https://translate.googleapis.com/')) {
+        return new Response(JSON.stringify([[['photorealistic sunset portrait on beach', '海边夕阳下的写实人像']]]), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return fetch(targetUrl, init);
+    },
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    await fetch(`${base}/api/comfy/config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: comfyUrl }),
+    });
+    const res1 = await (await fetch(`${base}/api/comfy/generate/image`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: '海边夕阳下的写实人像', width: 896, height: 1152 }),
+    })).json();
+    assert.equal(res1.promptId, 'realvis-pid-1');
+    assert.equal(res1.effectivePrompt, 'photorealistic sunset portrait on beach');
+    assert.equal(submitted[0]['1'].inputs.ckpt_name, 'RealVisXL_V5.0_Lightning_fp16.safetensors');
+    assert.equal(submitted[0]['5'].inputs.sampler_name, 'dpmpp_sde');
+    assert.equal(submitted[0]['5'].inputs.scheduler, 'karras');
+    assert.equal(submitted[0]['5'].inputs.steps, 6);
+    assert.equal(submitted[0]['5'].inputs.cfg, 1.8);
+
+    const res2 = await (await fetch(`${base}/api/comfy/generate/image`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: '海边夕阳下的写实人像', model: 'qwen', width: 1024, height: 1024 }),
+    })).json();
+    assert.equal(res2.promptId, 'realvis-pid-2');
+    assert.equal(submitted[1]['5'].class_type, 'TextEncodeQwenImage21');
+  } finally {
+    server.closeAllConnections?.();
+    mockComfy.closeAllConnections?.();
+    await Promise.all([
+      new Promise((resolve) => server.close(resolve)),
+      new Promise((resolve) => mockComfy.close(resolve)),
+    ]);
+    await rm(dir, { recursive: true, force: true, maxRetries: 5 });
+  }
+});
+
+test('WebAsset studio prefers Z-Image-Turbo with raw Chinese prompt and lumina2 CLIP when available', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'webasset-comfy-zimage-'));
+  const submitted = [];
+
+  const mockComfy = createServer(async (req, res) => {
+    const u = new URL(req.url || '/', 'http://127.0.0.1');
+    if (u.pathname === '/object_info/CheckpointLoaderSimple') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ CheckpointLoaderSimple: { input: { required: { ckpt_name: [['RealVisXL_V5.0_Lightning_fp16.safetensors']] } } } }));
+      return;
+    }
+    if (u.pathname === '/object_info/UNETLoader') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ UNETLoader: { input: { required: { unet_name: [['qwen_image_2.1_turbo_int8_convrot.safetensors', 'z_image_turbo_bf16.safetensors']] } } } }));
+      return;
+    }
+    if (u.pathname === '/object_info/CLIPLoader') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ CLIPLoader: { input: { required: { clip_name: [['qwen3vl_8b_w4a8.safetensors', 'qwen_3_4b.safetensors']] } } } }));
+      return;
+    }
+    if (u.pathname === '/object_info/VAELoader') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ VAELoader: { input: { required: { vae_name: [['ae.safetensors', 'qwen_image_2.1_vae_bf16.safetensors']] } } } }));
+      return;
+    }
+    if (u.pathname === '/prompt' && req.method === 'POST') {
+      const chunks = [];
+      for await (const c of req) chunks.push(c);
+      submitted.push(JSON.parse(Buffer.concat(chunks).toString('utf8')).prompt);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ prompt_id: `zimg-pid-${submitted.length}` }));
+      return;
+    }
+    res.writeHead(404).end();
+  });
+
+  await new Promise((resolve) => mockComfy.listen(0, '127.0.0.1', resolve));
+  const comfyUrl = `http://127.0.0.1:${mockComfy.address().port}`;
+  const server = createWebAssetServer({
+    siteRoot: root,
+    imageRoot: path.join(dir, 'assets'),
+    characterCatalog: path.join(dir, 'assets', 'characters', 'index.json'),
+    gamesRoot: path.join(dir, 'games'),
+    comfyStudioCacheDir: path.join(dir, 'comfy-cache'),
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    await fetch(`${base}/api/comfy/config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: comfyUrl }),
+    });
+    const res = await (await fetch(`${base}/api/comfy/generate/image`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: '海边夕阳下的写实人像摄影，自然光影', width: 1024, height: 1024 }),
+    })).json();
+    assert.equal(res.promptId, 'zimg-pid-1');
+    assert.equal(res.effectivePrompt, undefined);
+    assert.equal(submitted[0]['1'].inputs.unet_name, 'z_image_turbo_bf16.safetensors');
+    assert.equal(submitted[0]['2'].class_type, 'ModelSamplingAuraFlow');
+    assert.equal(submitted[0]['2'].inputs.shift, 3.0);
+    assert.equal(submitted[0]['3'].inputs.clip_name, 'qwen_3_4b.safetensors');
+    assert.equal(submitted[0]['3'].inputs.type, 'lumina2');
+    assert.equal(submitted[0]['4'].inputs.vae_name, 'ae.safetensors');
+    assert.equal(submitted[0]['5'].inputs.text, '海边夕阳下的写实人像摄影，自然光影');
+    assert.equal(submitted[0]['8'].inputs.sampler_name, 'res_multistep');
+    assert.equal(submitted[0]['8'].inputs.scheduler, 'simple');
+    assert.equal(submitted[0]['8'].inputs.steps, 9);
   } finally {
     server.closeAllConnections?.();
     mockComfy.closeAllConnections?.();

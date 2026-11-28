@@ -65,7 +65,25 @@ description: Google Colab + ComfyUI + WebAsset `#studio` 远程生图与音视�
 
 ## 已验证模型与节点配方（ComfyUI 0.46.0 + CUDA 13）
 
-### 1. 生图主选：Qwen-Image-2.1-Turbo（原生中文，8 步极速）
+### 1. 生图主选：Z-Image-Turbo（原生中英、9 步极速、无审查友好）
+- **模型来源**：`Comfy-Org/z_image_turbo`
+  - `split_files/diffusion_models/z_image_turbo_bf16.safetensors`（11.46 GB，放 `models/diffusion_models/`）
+  - `split_files/text_encoders/qwen_3_4b.safetensors`（7.49 GB，放 `models/text_encoders/`）
+  - `split_files/vae/ae.safetensors`（320 MB，放 `models/vae/`）
+- **节点连线**（`buildZImageTurboPrompt`）：
+  - `UNETLoader` → `ModelSamplingAuraFlow(shift=3.0)` → `KSampler(steps=9, cfg=1.0, sampler="res_multistep", scheduler="simple")`
+  - `CLIPLoader(type="lumina2")` → `CLIPTextEncode`（正）+ `ConditioningZeroOut`（负）→ `KSampler`
+  - `EmptySD3LatentImage` → `KSampler` → `VAEDecode` → `SaveImage`
+- **特性**：原生理解中英文，直接传原始提示词；检测到完整套件时优先选用（传 `model: "sdxl"` 或 `"qwen"` 可显式切换）。
+
+### 2. 生图备选（写实）：RealVisXL V5.0 Lightning（6 步极速）
+- **模型来源**：`SG161222/RealVisXL_V5.0_Lightning`
+  - `RealVisXL_V5.0_Lightning_fp16.safetensors`（放 `models/checkpoints/`，约 6.46 GB，OpenRAIL++）
+- **节点连线**（`buildSdxlRealisticImagePrompt`）：
+  - `CheckpointLoaderSimple` → `CLIPTextEncode`（正 + 写实负向提示词）→ `EmptyLatentImage` → `KSampler(steps=6, cfg=1.8, sampler="dpmpp_sde", scheduler="karras")` → `VAEDecode` → `SaveImage`
+- **特性**：检测到写实 SDXL checkpoint 时优先选用（传 `model: "qwen"` 可显式切回 Qwen-Image-2.1-Turbo）；中文提示词自动走 `translatePromptToEnglish`。
+
+### 2. 生图备选（原生中文）：Qwen-Image-2.1-Turbo（8 步极速）
 - **模型来源**：`Comfy-Org/Qwen-Image-2.1`
   - `diffusion_models/qwen_image_2.1_turbo_int8_convrot.safetensors`
   - `text_encoders/qwen3vl_8b_w4a8.safetensors`
@@ -76,7 +94,7 @@ description: Google Colab + ComfyUI + WebAsset `#studio` 远程生图与音视�
   - `EmptyLatentImage` → `KSampler` → `VAEDecode` → `SaveImage`
 - **特性**：原生理解中文，直接传原始中文提示词；T4 `--lowvram` 下 `1024×1024` 首次加载含推理约 `73s`。
 
-### 2. 生图备选：FLUX.1-schnell FP8（4 步）
+### 3. 生图备选（轻量）：FLUX.1-schnell FP8（4 步）
 - **模型来源**：`Comfy-Org/flux1-schnell`
 - **节点连线**（`buildFluxImagePrompt`）：`CheckpointLoaderSimple` → `CLIPTextEncode`（正）+ `ConditioningZeroOut`（负）→ `EmptySD3LatentImage` → `KSampler(steps=4, cfg=1.0, sampler="euler", scheduler="simple")` → `VAEDecode` → `SaveImage`。
 - **特性**：英文编码器，后端检测到汉字时自动调用 `translatePromptToEnglish`（Google Translate → MyMemory 双路回退）再送入节点。
