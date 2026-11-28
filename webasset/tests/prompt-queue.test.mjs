@@ -38,6 +38,8 @@ test('replaced white-background dog image is no longer queued for regeneration',
   const filmSection = report.split('## 一、默认形态')[1].split('## 二、模型参考')[0];
   assert.match(filmSection, /### 影视图生成流程/);
   assert.match(filmSection, /以原始参考图为外观依据/);
+  assert.match(filmSection, /先为该角色定五官/);
+  assert.match(filmSection, /遮住发型和服装后/);
   assert.match(filmSection, /旧稿仅用于保留已通过的部分/);
   assert.match(filmSection, /影视稿确认后再进入模型图/);
   assert.match(report, /默认形态（四栏六视图）：\*\*1 个任务\*\*/);
