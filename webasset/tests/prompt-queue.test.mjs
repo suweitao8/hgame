@@ -35,6 +35,7 @@ async function exportQueueFor(dogImagePath) {
 test('replaced white-background dog image is no longer queued for regeneration', async () => {
   const report = await exportQueueFor('characters/daodun-dog/generated/default-6view-daodun-dog-20261110-v2.png');
   assert.match(report.split('## 待生成概览')[0], /采用自然的中式面孔/);
+  assert.match(report.split('## 待生成概览')[0], /无表情验收[\s\S]*?嘴角哪怕轻微上扬也按微笑处理/);
   const filmSection = report.split('## 一、默认形态')[1].split('## 二、模型参考')[0];
   assert.match(filmSection, /### 影视图生成流程/);
   assert.match(filmSection, /以原始参考图为外观依据/);

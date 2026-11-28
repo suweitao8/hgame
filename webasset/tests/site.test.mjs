@@ -227,6 +227,8 @@ test('two generation modes produce different modelling briefs', () => {
   assert.match(standard, /六视图/);
   for (const prompt of [standard, humanoid]) {
     assert.match(prompt, /所有视图统一使用闭嘴的中性静息表情/);
+    assert.match(prompt, /嘴角哪怕轻微上扬也按微笑处理/);
+    assert.match(prompt, /逐一检查各视角中可见的脸部/);
     assert.match(prompt, /禁止张嘴、露齿、嘟嘴、笑、皱眉或瞪眼/);
     assert.doesNotMatch(prompt, /机灵/);
   }
