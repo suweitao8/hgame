@@ -898,12 +898,12 @@ function ensureBenchPostPipeline(vp) {
         sharpness: 0,
         vignette: 0,
       },
-      toneMapping: 'agx',
-      exposure: 1.15,
-      bloomStrength: 0.26,
-      bloomThreshold: 0.92,
+      toneMapping: 'ueFilmic',
+      exposure: 1.0,
+      bloomStrength: 0.25,
+      bloomThreshold: 1.0,
       bloomSoftKnee: 0.5,
-      saturation: 1.05,
+      saturation: 1.0,
       vignette: 0,
       sharpness: 0,
     });
@@ -955,12 +955,12 @@ function renderBenchScene(vp) {
   if (pipe?.supported) {
     vp.renderer.toneMapping = THREE.NoToneMapping;
     pipe.setState({
-      toneMapping: 'agx',
-      exposure: 1.15,
-      saturation: 1.05,
+      toneMapping: 'ueFilmic',
+      exposure: 1.0,
+      saturation: 1.0,
       bloom: bloomToggle ? bloomToggle.checked : true,
-      bloomStrength: qTier === 'high' ? 0.26 : 0.16,
-      bloomThreshold: 0.92,
+      bloomStrength: qTier === 'high' ? 0.25 : 0.16,
+      bloomThreshold: 1.0,
       bloomSoftKnee: 0.5,
       fxaa: qTier === 'high',
     });
@@ -1302,7 +1302,7 @@ function frameBenchCamera(vp, effectId) {
   vp.controls.update();
 }
 
-const GROUND_ANCHORED_BENCH_RE = /(?:aura|shield|circle|ring|field|ground|slam|geysir|geyser|fountain|puddle|portal|zone|curse|cage|nukevertical|firefield|acidboiling|water|campfire|torch|candle|tornado|whirlpool|volcano)/i;
+const GROUND_ANCHORED_BENCH_RE = /(?:aura|shield|circle|ring|field|ground|slam|geysir|geyser|fountain|puddle|portal|zone|curse|cage|nukevertical|firefield|acidboiling|water(?:fall|puddle|ripple|fountain|barrage|boiling|pool)|campfire|torch|candle|tornado|whirlpool|volcano)/i;
 
 function computeBenchPlayY(recipe, effectId) {
   let yOff = 0.05;
@@ -2767,6 +2767,20 @@ async function initVfxView() {
 
 window.__WEBASSET_VFX_TEST__ = {
   listIds: () => getAllItems().map(it => it.id),
+  getItemsMeta: () => getAllItems().map(it => {
+    const v = getActiveVariant(it) || it;
+    return {
+      id: it.id,
+      variantId: v.id,
+      effectId: v.effectId || v.id,
+      packId: v.packId,
+      name: it.name,
+      bundleId: it.bundleId,
+      category: it.category,
+      subCategory: it.subCategory,
+      relSource: v.relSource || it.relSource || '',
+    };
+  }),
   listBundles: () => vfxBundles.map(b => ({ ...b })),
   getActiveBundle: () => activeBundleId,
   selectBundle: async (bundleId) => {
@@ -2835,6 +2849,62 @@ window.__WEBASSET_VFX_TEST__ = {
     }
     tickVfx(dt);
     return null;
+  },
+  getActivePlayMeta: () => {
+    const item = getCurrentItem();
+    const activeVar = getActiveVariant(item) || item;
+    const eid = activeBenchRecipe?.id || activeVar?.effectId || activeVar?.id || '';
+    const playY = activeBenchRecipe ? computeBenchPlayY(activeBenchRecipe, eid) : 1.15;
+    return {
+      id: item?.id || '',
+      variantId: activeVar?.id || '',
+      effectId: eid,
+      packId: activeVar?.packId || '',
+      playY,
+      duration: activeBenchRecipe?.duration ?? 0,
+      loop: Boolean(activeBenchRecipe?.loop),
+      layerCount: activeBenchRecipe?.layers?.length ?? 0,
+    };
+  },
+  resetAndStepTo: (targetT, opts = {}) => {
+    const vp = viewport;
+    if (!vp || !activeBenchItem?.isShurikenBench || !hgameVfx || !activeBenchRecipe) return null;
+    const {
+      camPos = [0, 2.2, 6.0],
+      camTarget = [0, 1.15, 0],
+      fov = 42,
+      hideGrid = true,
+      bgHex = '#282c34',
+    } = opts;
+    isPlaying = false;
+    if (playBtn) playBtn.textContent = '播放';
+    if (benchStudioGrid) benchStudioGrid.visible = !hideGrid;
+    if (vp.gridHelper) vp.gridHelper.visible = !hideGrid;
+    if (bgHex && vp.scene?.background) vp.scene.background.set(bgHex);
+    if (vp.camera) {
+      if (fov && Math.abs(vp.camera.fov - fov) > 0.05) {
+        vp.camera.fov = fov;
+        vp.camera.updateProjectionMatrix();
+      }
+      vp.controls.target.set(camTarget[0], camTarget[1], camTarget[2]);
+      vp.camera.position.set(camPos[0], camPos[1], camPos[2]);
+      vp.controls.update();
+    }
+    const activeVar = getActiveVariant(activeBenchItem) || activeBenchItem;
+    const eid = activeVar.effectId || activeBenchRecipe.id;
+    const playY = computeBenchPlayY(activeBenchRecipe, eid);
+    hgameVfx.reset();
+    if (vp.camera) hgameVfx.setCamera?.(vp.camera);
+    activeBenchHandle = hgameVfx.playEffect(activeBenchRecipe.id, { x: 0, y: playY, z: 0, scale: 1 });
+    const stepDt = 1 / 60;
+    const steps = Math.max(1, Math.round(targetT / stepDt));
+    for (let s = 0; s < steps; s++) {
+      benchSimDt = stepDt;
+      hgameVfx.update(stepDt);
+    }
+    renderBenchScene(vp);
+    const totals = getBenchTelemetryTotals(hgameVfx.getStats());
+    return { id: activeBenchItem.id, effectId: activeBenchRecipe.id, playY, targetT, steps, ...totals };
   },
   getTelemetry: () => (hgameVfx ? {
     id: activeBenchItem?.id || activeSelection.id,

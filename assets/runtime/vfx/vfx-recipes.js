@@ -853,7 +853,9 @@ export function createEffectPlayer({
       const prob = sub.probability ?? 1.0;
       if (prob < 1.0 && prng.nextFloat() > prob) continue;
       if (typeof sub.effect === 'string' && !registry.has(sub.effect)) continue;
-      const iv = Number(sub.inheritVelocity ?? 0);
+      const ivRaw = sub.inheritVelocity;
+      const ivVal = ivRaw && typeof ivRaw === 'object' ? Number(ivRaw.multiplier ?? 0) : Number(ivRaw ?? 0);
+      const iv = Number.isFinite(ivVal) ? ivVal : 0;
       const effDef = typeof sub.effect === 'string' ? registry.get(sub.effect) : sub.effect;
       const isPosRange = (v) => (Array.isArray(v) ? (Number(v[0] ?? 0) > 0 || Number(v[1] ?? 0) > 0) : Number(v ?? 0) > 0);
       const needsFollow = Boolean(
@@ -1381,7 +1383,11 @@ export function createEffectPlayer({
       scratchRadVel = 0;
     }
 
-    const iv = Number(layer.inheritVelocity ?? 0);
+    const ivRaw = layer.inheritVelocity;
+    const ivVal = ivRaw && typeof ivRaw === 'object'
+      ? (ivRaw.mode === 'current' ? 0 : readRange(ivRaw.multiplier ?? ivRaw.curve ?? 0, 0, 0, prng))
+      : Number(ivRaw ?? 0);
+    const iv = Number.isFinite(ivVal) ? ivVal : 0;
     scratchVel[0] = vx + slot.inheritVx + slot.followVx * iv;
     scratchVel[1] = vy + slot.inheritVy + slot.followVy * iv;
     scratchVel[2] = vz + slot.inheritVz + slot.followVz * iv;
@@ -1482,6 +1488,14 @@ export function createEffectPlayer({
     sizeStart, trackedSlot, noiseScroll, noiseDamp,
   ) {
     if (!layer.trail) return;
+    if (
+      layer.trail.mode !== 'ribbon'
+      && Number.isFinite(layer.trail.ratio)
+      && layer.trail.ratio < 0.999
+      && (layer.trail.ratio <= 0 || prng.nextFloat() > layer.trail.ratio)
+    ) {
+      return;
+    }
     const hasPartColCurve = Array.isArray(layer.colorCurve) && layer.colorCurve.length >= 2;
     const c0 = (!layer.trail.inheritColor || !hasPartColCurve) ? layer.colorCurve?.[0]?.[1] : null;
     const trailTint = [
@@ -2298,10 +2312,16 @@ export function createEffectPlayer({
           ? (SHURIKEN_QUALITY_TIERS[shurikenKernel.getQualityTier()]?.emissionScale ?? 1.0)
           : 1.0;
         const warmCount = Math.min(180, Math.max(layer._shurikenLayer ? 0 : 1, Math.round(avgRate * avgLife * emScale)));
+        const ls = slot.layers[l];
+        const layerDur = Math.max(0.01, (layer.duration ?? slot.duration) / simSpd);
+        const warmSpan = Math.max(layerDur, avgLife * simSpd);
+        const savedCycleAge = ls ? ls.cycleAge : 0;
         for (let k = 0; k < warmCount; k++) {
           const frac = (k + prng.nextFloat()) / warmCount;
-          emitParticleOrMesh(layer, slot, frac * avgLife * simSpd);
+          if (ls) ls.cycleAge = (1 - frac) * warmSpan;
+          emitParticleOrMesh(layer, slot, frac * avgLife * simSpd, ls, k, warmCount);
         }
+        if (ls) ls.cycleAge = savedCycleAge;
       }
     }
     stepSlotLayers(slot, 0);

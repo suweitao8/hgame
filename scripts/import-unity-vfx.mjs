@@ -1761,13 +1761,14 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id, meshManifest = n
 
       let useShapeMatrix = false;
       if (mappedType !== 'mesh') {
+        const nzScale = (v) => (Math.abs(v) < 1e-3 ? (v < 0 ? -1e-3 : 1e-3) : v);
         const Lw = isSubChild
           ? quatToMat3(alignRot)
           : (psScalingMode === 1
-            ? mat3Mul(quatToMat3(worldTr.rot), mat3Diag(worldTr.ownScale[0], worldTr.ownScale[1], worldTr.ownScale[2]))
+            ? mat3Mul(quatToMat3(worldTr.rot), mat3Diag(nzScale(worldTr.ownScale[0]), nzScale(worldTr.ownScale[1]), nzScale(worldTr.ownScale[2])))
             : worldTr.linear);
         const Rsh = quatToMat3(qShLocal);
-        const Ssh = mat3Diag(shSignSx, shSignSy, shSignSz);
+        const Ssh = mat3Diag(nzScale(shSignSx), nzScale(shSignSy), nzScale(shSignSz));
         let M = mat3Mul(Lw, mat3Mul(Rsh, Ssh));
         const F = mat3Diag(1, 1, -1);
         M = mat3Mul(F, mat3Mul(M, F));
@@ -2407,6 +2408,8 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id, meshManifest = n
     const trailMod = extractSection(ps, 'TrailModule');
     if (/enabled:\s*1/.test(trailMod)) {
       const trailMode = Number((trailMod.match(/mode:\s*(\d+)/) || [])[1] ?? 0);
+      const trailRatioRaw = Number((trailMod.match(/ratio:\s*([+-]?[\d.eE+-]+)/) || [])[1] ?? 1);
+      const trailRatio = Number.isFinite(trailRatioRaw) ? Math.max(0, Math.min(1, trailRatioRaw)) : 1;
       const tLife = readMinMaxScalar(trailMod, 'lifetime', 0.2);
       const wScalar = readMinMaxScalar(trailMod, 'widthOverTrail', 1);
       const sizeAffW = !/sizeAffectsWidth:\s*0\b/.test(trailMod);
@@ -2501,6 +2504,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id, meshManifest = n
       const hasTexScale = Math.abs(texScaleX - 1) > 1e-4 || Math.abs(texScaleY - 1) > 1e-4;
       layer.trail = {
         mode: trailMode === 1 ? 'ribbon' : 'particles',
+        ...(trailRatio < 0.999 ? { ratio: Number(trailRatio.toFixed(4)) } : {}),
         lifetime: tLife,
         lifetimeMode: trailMode === 1 ? 'seconds' : 'fraction',
         blend: trailMat?.blend || 'alpha',

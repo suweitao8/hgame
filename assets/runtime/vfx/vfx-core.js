@@ -452,7 +452,8 @@ export function applyClampVelocityStep(target, cfg, dt, t = 0, seed = 0.5) {
   }
   const cDampen = Math.max(0, Math.min(1, Number(cfg.dampen ?? 1)));
   if (cDampen <= 0) return;
-  const damp = cDampen >= 0.999 ? 1.0 : (1.0 - Math.pow(1.0 - cDampen, dt * 60.0));
+  // Unity Shuriken LimitVelocityOverLifetime.dampen operates at a 30Hz reference rate: (1 - dampen)^(dt * 30).
+  const damp = cDampen >= 0.999 ? 1.0 : (1.0 - Math.pow(1.0 - cDampen, dt * 30.0));
   if (cfg.separateAxis) {
     const lx = Math.max(0, evalClampSpec(cfg.x, t, seed, 1000));
     const ly = Math.max(0, evalClampSpec(cfg.y, t, seed, 1000));

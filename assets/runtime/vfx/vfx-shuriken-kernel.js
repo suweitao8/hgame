@@ -762,7 +762,7 @@ export function createShurikenKernel({
 
         if (cl.clampVel) {
           const cv = cl.clampVel;
-          const damp = cv.dampen >= 0.999 ? 1.0 : (1.0 - Math.pow(1.0 - cv.dampen, dt * 60.0));
+          const damp = cv.dampen >= 0.999 ? 1.0 : (1.0 - Math.pow(1.0 - cv.dampen, dt * 30.0));
           if (cv.drag) {
             const cDrag = Math.max(0, evaluateMinMaxCurve(cv.drag, t, soa.randSize[i]));
             if (cDrag > 0.001) {

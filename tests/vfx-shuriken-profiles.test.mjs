@@ -756,7 +756,9 @@ test('hasClampVelocity and applyClampVelocityStep brake particles toward 0 when 
   assert.equal(hasClampVelocity(clampCfg), true, 'limit=0 with dampen>0 is active air-braking');
   const target = { vx: 10, vy: 0, vz: 0 };
   applyClampVelocityStep(target, clampCfg, 1 / 60, 0.1, 0.5);
-  assert.ok(target.vx > 7 && target.vx < 8, `expected speed damped from 10 to ~7.5 in 1 step, got ${target.vx}`);
+  assert.ok(Math.abs(target.vx - 10 * Math.sqrt(0.75)) < 1e-4, `expected Unity 30Hz dampen at 1/60s (~8.66), got ${target.vx}`);
+  applyClampVelocityStep(target, clampCfg, 1 / 60, 0.1, 0.5);
+  assert.ok(Math.abs(target.vx - 7.5) < 1e-4, `expected speed damped to 7.5 after 1/30s total, got ${target.vx}`);
 
   // Verify static 3x3 flipbook with startFrame=0.4444 maps to frame 4 (center cell: u in [1/3..2/3], v in [1/3..2/3]), not frame 3
   const scene = new THREE.Scene();

@@ -698,7 +698,7 @@ public static class HGameVfxOracleExporter
         {
             var asset = AssetDatabase.LoadAssetAtPath<GameObject>(pfPath);
             if (asset == null) continue;
-            var inst = UnityEngine.Object.Instantiate(asset, Vector3.zero, Quaternion.identity);
+            var inst = UnityEngine.Object.Instantiate(asset, Vector3.zero, asset.transform.rotation);
             try
             {
                 var allPs = inst.GetComponentsInChildren<ParticleSystem>(false);

@@ -5685,6 +5685,170 @@ test('shape.mesh normalOffset offsets surface samples along normal before shape.
   }
 });
 
+test('inheritVelocity object produces finite velocities, prewarm sweeps arcMode loop, and zero-scale ShapeModule preserves emission direction', () => {
+  const atlas = createAtlasParticlePool({ mode: 'headless', maxParticles: 128 });
+  const captured = [];
+  const origEmit = atlas.emit.bind(atlas);
+  const atlasProxy = Object.assign(Object.create(atlas), {
+    emit(opts) {
+      captured.push(opts);
+      return origEmit(opts);
+    },
+  });
+  const player = createEffectPlayer({ atlasParticles: atlasProxy });
+  try {
+    // 1. inheritVelocity object ({ mode, multiplier }) must never produce NaN
+    player.playEffect({
+      schemaVersion: 1,
+      id: 'inherit_vel_obj_test',
+      duration: 1,
+      layers: [
+        {
+          name: 'sparks',
+          kind: 'particle',
+          renderMode: 'billboard',
+          speed: 5,
+          life: 1,
+          inheritVelocity: { mode: 'initial', multiplier: 0.2 },
+          bursts: [{ time: 0, count: 4 }],
+        },
+      ],
+    });
+    player.update(1 / 60);
+    assert.equal(captured.length, 4);
+    for (const p of captured) {
+      assert.ok(Number.isFinite(p.vx) && Number.isFinite(p.vy) && Number.isFinite(p.vz), `expected finite velocity, got (${p.vx},${p.vy},${p.vz})`);
+    }
+
+    // 2. prewarm advances cycleAge so arcMode:'loop' spreads particles around XZ instead of angle 0
+    captured.length = 0;
+    player.reset();
+    player.playEffect({
+      schemaVersion: 1,
+      id: 'prewarm_arc_loop_test',
+      duration: 3,
+      loop: true,
+      layers: [
+        {
+          name: 'fog',
+          kind: 'particle',
+          renderMode: 'vertical',
+          prewarm: true,
+          rate: 7,
+          life: 3,
+          speed: 0,
+          shape: { type: 'circle', radius: 2, radiusThickness: 0.6, arcMode: 'loop', arcSpeed: 2 },
+        },
+      ],
+    });
+    assert.ok(captured.length >= 10, `expected prewarmed particles, got ${captured.length}`);
+    let minZ = Infinity;
+    let maxZ = -Infinity;
+    for (const p of captured) {
+      minZ = Math.min(minZ, p.z);
+      maxZ = Math.max(maxZ, p.z);
+    }
+    assert.ok(maxZ - minZ > 1.0, `expected prewarm arcMode:'loop' Z spread > 1.0m, got ${(maxZ - minZ).toFixed(3)}`);
+  } finally {
+    player.dispose();
+    atlas.dispose();
+  }
+
+  // 3. Zero ShapeModule.m_Scale axis on rotated box preserves emission direction column in shape.matrix
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'unity-zero-shape-scale-'));
+  try {
+    const prefabPath = path.join(tmpDir, 'rain_zero_z.prefab');
+    fs.writeFileSync(
+      prefabPath,
+      [
+        '%YAML 1.1',
+        '--- !u!1 &100',
+        'GameObject:\n  m_Name: RainZeroZ\n  m_IsActive: 1',
+        '--- !u!4 &101',
+        'Transform:\n  m_GameObject: {fileID: 100}\n  m_LocalPosition: {x: 0, y: 0, z: 0}\n  m_LocalRotation: {x: -0.7071068, y: 0, z: 0, w: 0.7071068}\n  m_LocalScale: {x: 1, y: 1, z: 1}\n  m_Father: {fileID: 0}',
+        '--- !u!198 &102',
+        'ParticleSystem:\n  m_GameObject: {fileID: 100}\n  lengthInSec: 5\n  InitialModule:\n    startLifetime:\n      minMaxState: 0\n      scalar: 2\n    startSpeed:\n      minMaxState: 0\n      scalar: -20\n    startSize:\n      minMaxState: 0\n      scalar: 0.1\n  EmissionModule:\n    enabled: 1\n    rateOverTime:\n      minMaxState: 0\n      scalar: 20\n  ShapeModule:\n    enabled: 1\n    type: 5\n    m_Position: {x: 0, y: 0, z: 0}\n    m_Rotation: {x: 0, y: 0, z: 0}\n    m_Scale: {x: 6, y: 6, z: 0}',
+        '--- !u!199 &103',
+        'ParticleSystemRenderer:\n  m_GameObject: {fileID: 100}\n  m_Enabled: 1\n  m_RenderMode: 1',
+      ].join('\n'),
+      'utf8',
+    );
+    const { recipe } = convertUnityPrefab({ unityRoot: tmpDir, prefabPath, id: 'rain_zero_z' });
+    const sm = recipe.layers[0].shape.matrix;
+    assert.ok(Array.isArray(sm) && sm.length === 9);
+    const col2Len = Math.hypot(sm[2], sm[5], sm[8]);
+    assert.ok(col2Len > 1e-4, `expected non-singular shape.matrix col2, got len=${col2Len}`);
+    const capRain = [];
+    const atlasRain = createAtlasParticlePool({ mode: 'headless', maxParticles: 64 });
+    const proxyRain = Object.assign(Object.create(atlasRain), {
+      emit(o) {
+        capRain.push(o);
+        return atlasRain.emit(o);
+      },
+    });
+    const pRain = createEffectPlayer({ atlasParticles: proxyRain });
+    try {
+      pRain.playEffect(recipe);
+      pRain.update(0.2);
+      assert.ok(capRain.length > 0);
+      assert.ok(capRain[0].vy < -15, `expected downward rain vy < -15, got vy=${capRain[0].vy}`);
+    } finally {
+      pRain.dispose();
+      atlasRain.dispose();
+    }
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('vfx-recipes: trail.ratio gates particle trail allocation to configured fraction', () => {
+  let allocCount = 0;
+  const trailsStub = {
+    allocTrail() {
+      allocCount += 1;
+      return allocCount;
+    },
+    getTime() { return 0; },
+    pushTrailPoint() {},
+    updateTrailHead() {},
+    setTrailWidthScale() {},
+    setTrailLifeMod() {},
+    freeTrail() {},
+    update() {},
+  };
+  const atlas = createAtlasParticlePool({ mode: 'headless', maxParticles: 64 });
+  const recipe = {
+    schemaVersion: 1,
+    id: 'trail_ratio_test',
+    duration: 1,
+    layers: [{
+      kind: 'particle',
+      rate: 0,
+      bursts: [{ time: 0, count: 40 }],
+      life: 1.0,
+      speed: 2.0,
+      size: 0.2,
+      blend: 'additive',
+      trail: {
+        mode: 'particles',
+        ratio: 0.25,
+        lifetime: 0.4,
+        lifetimeMode: 'fraction',
+        width: 0.1,
+      },
+    }],
+  };
+  const player = createEffectPlayer({ atlasParticles: atlas, trails: trailsStub });
+  try {
+    player.playEffect(recipe);
+    player.update(0.05);
+    assert.ok(allocCount > 0 && allocCount < 25, `expected ~10 trails out of 40 particles for ratio=0.25, got ${allocCount}`);
+  } finally {
+    player.dispose();
+    atlas.dispose();
+  }
+});
+
 
 
 
