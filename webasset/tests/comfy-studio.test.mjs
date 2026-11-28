@@ -12,6 +12,7 @@ import {
   buildQwenImage21Prompt,
   buildSdxlRealisticImagePrompt,
   buildZImageTurboPrompt,
+  resolveStudioDimensions,
   snapH3Frames,
   translatePromptToEnglish,
 } from '../lib/comfy-studio-server.mjs';
@@ -23,7 +24,20 @@ const fakeMp4 = Buffer.from('00000018667479706d703432000000006d70343269736f6d', 
 test('snapH3Frames snaps durations to ComfyUI 17k+5 frame grid', () => {
   assert.equal(snapH3Frames(3), 73); // 72 -> 73 (17*4 + 5)
   assert.equal(snapH3Frames(5), 124); // 120 -> 124 (17*7 + 5)
+  assert.equal(snapH3Frames(8), 192); // 192 = 17*11 + 5
+  assert.equal(snapH3Frames(10), 243); // 240 -> 243 (17*14 + 5)
   assert.equal(snapH3Frames(0.1), 5);
+});
+
+test('resolveStudioDimensions computes 32-aligned sizes from resolution tier and aspect ratio', () => {
+  assert.deepEqual(resolveStudioDimensions('1080p', '16:9'), { width: 1920, height: 1088 });
+  assert.deepEqual(resolveStudioDimensions('1080p', '4:3'), { width: 1440, height: 1088 });
+  assert.deepEqual(resolveStudioDimensions('1080p', '1:1'), { width: 1088, height: 1088 });
+  assert.deepEqual(resolveStudioDimensions('1080p', '3:4'), { width: 1088, height: 1440 });
+  assert.deepEqual(resolveStudioDimensions('1080p', '9:16'), { width: 1088, height: 1920 });
+  assert.deepEqual(resolveStudioDimensions('720p', '16:9'), { width: 1280, height: 736 });
+  assert.deepEqual(resolveStudioDimensions('720p', '4:3'), { width: 960, height: 736 });
+  assert.deepEqual(resolveStudioDimensions('480p', '16:9'), { width: 864, height: 480 });
 });
 
 test('translatePromptToEnglish falls back to secondary provider when Google fails', async () => {
@@ -268,6 +282,8 @@ test('WebAsset studio API connects to ComfyUI, generates image + video, and serv
   assert.match(html, /data-workspace="studio"/);
   assert.match(html, /id="studio-view"/);
   assert.match(html, /id="studio-img-model"/);
+  assert.match(html, /id="studio-img-ratio"/);
+  assert.match(html, /id="studio-vid-ratio"/);
   assert.match(html, /id="studio-detail-prompt"/);
   assert.doesNotMatch(html, /id="studio-connect-btn"|id="studio-comfy-url"/);
 

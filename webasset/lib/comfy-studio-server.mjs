@@ -47,6 +47,19 @@ export function snapH3Frames(seconds) {
   return raw + ((5 - (raw % 17) + 17) % 17);
 }
 
+export function resolveStudioDimensions(resolution = '720p', aspectRatio = '1:1') {
+  const tier = String(resolution || '').toLowerCase();
+  const base = tier === '1080p' ? 1080 : tier === '480p' ? 480 : 720;
+  const parts = String(aspectRatio || '1:1').split(':').map(Number);
+  const rw = Number.isFinite(parts[0]) && parts[0] > 0 ? parts[0] : 1;
+  const rh = Number.isFinite(parts[1]) && parts[1] > 0 ? parts[1] : 1;
+  const snap32 = (n) => Math.max(64, Math.round(n / 32) * 32);
+  if (rw >= rh) {
+    return { width: snap32(base * (rw / rh)), height: snap32(base) };
+  }
+  return { width: snap32(base), height: snap32(base * (rh / rw)) };
+}
+
 export async function translatePromptToEnglish(text, fetchImpl = fetch) {
   const raw = String(text || '').trim();
   if (!raw || !/[\u4e00-\u9fff]/.test(raw)) return raw;
@@ -702,6 +715,9 @@ export function createComfyStudioHandler({
         else if (hasSdxl && requestedModel !== 'qwen') selectedBackend = 'sdxl';
         else if (hasQwen) selectedBackend = 'qwen';
 
+        const resolvedDims = (!body?.width || !body?.height) && body?.resolution
+          ? resolveStudioDimensions(body.resolution, body.aspectRatio)
+          : { width: body?.width, height: body?.height };
         let effectivePrompt = prompt;
         let graph;
         if (selectedBackend === 'zimage') {
@@ -710,8 +726,8 @@ export function createComfyStudioHandler({
             clipName: zImageClip,
             vaeName: zImageVae,
             prompt,
-            width: body?.width,
-            height: body?.height,
+            width: resolvedDims.width,
+            height: resolvedDims.height,
             steps: body?.steps ?? 9,
             seed: body?.seed,
           });
@@ -721,8 +737,8 @@ export function createComfyStudioHandler({
           graph = buildSdxlRealisticImagePrompt({
             ckptName: sdxlCkpt,
             prompt: effectivePrompt,
-            width: body?.width,
-            height: body?.height,
+            width: resolvedDims.width,
+            height: resolvedDims.height,
             steps: body?.steps ?? (isLightning ? 6 : 25),
             cfg: isLightning ? 1.8 : 5.0,
             samplerName: isLightning ? 'dpmpp_sde' : 'dpmpp_2m_sde',
@@ -736,8 +752,8 @@ export function createComfyStudioHandler({
             clipLoaderClass: 'CLIPLoader',
             vaeName: qwenVae,
             prompt,
-            width: body?.width,
-            height: body?.height,
+            width: resolvedDims.width,
+            height: resolvedDims.height,
             steps: 8,
             seed: body?.seed,
           });
@@ -751,8 +767,8 @@ export function createComfyStudioHandler({
           graph = buildFluxImagePrompt({
             ckptName,
             prompt: effectivePrompt,
-            width: body?.width,
-            height: body?.height,
+            width: resolvedDims.width,
+            height: resolvedDims.height,
             steps: body?.steps,
             seed: body?.seed,
           });
@@ -840,14 +856,17 @@ export function createComfyStudioHandler({
           return;
         }
 
+        const resolvedVideoDims = (!body?.width || !body?.height) && body?.resolution
+          ? resolveStudioDimensions(body.resolution, body.aspectRatio || '16:9')
+          : { width: body?.width, height: body?.height };
         const graph = buildMiniMaxH3VideoPrompt({
           unetName,
           clipName,
           videoVaeName,
           audioVaeName,
           prompt,
-          width: body?.width,
-          height: body?.height,
+          width: resolvedVideoDims.width,
+          height: resolvedVideoDims.height,
           duration: body?.duration,
           steps: body?.steps,
           seed: body?.seed,

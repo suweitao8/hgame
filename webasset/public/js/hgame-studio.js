@@ -12,6 +12,7 @@ const promptInput = document.querySelector('#studio-prompt');
 const imgControls = document.querySelector('#studio-img-controls');
 const imgModelSelect = document.querySelector('#studio-img-model');
 const imgSizeSelect = document.querySelector('#studio-img-size');
+const imgRatioSelect = document.querySelector('#studio-img-ratio');
 const vidControls = document.querySelector('#studio-vid-controls');
 const vidImageInput = document.querySelector('#studio-video-image');
 const refPreviewWrap = document.querySelector('#studio-ref-preview-wrap');
@@ -19,6 +20,7 @@ const refPreviewImg = document.querySelector('#studio-ref-preview');
 const refClearBtn = document.querySelector('#studio-ref-clear');
 const vidDurationSelect = document.querySelector('#studio-vid-duration');
 const vidSizeSelect = document.querySelector('#studio-vid-size');
+const vidRatioSelect = document.querySelector('#studio-vid-ratio');
 const submitBtn = document.querySelector('#studio-submit');
 const statusEl = document.querySelector('#studio-status');
 
@@ -333,6 +335,18 @@ async function pollJob(promptId) {
   }
 }
 
+function resolveStudioDimensions(tier = '720p', ratio = '1:1') {
+  const key = String(tier || '').toLowerCase();
+  const base = key === '1080p' ? 1080 : key === '480p' ? 480 : 720;
+  const [rw = 1, rh = 1] = String(ratio || '1:1').split(':').map(Number);
+  const wRatio = Number.isFinite(rw) && rw > 0 ? rw : 1;
+  const hRatio = Number.isFinite(rh) && rh > 0 ? rh : 1;
+  const snap32 = (n) => Math.max(64, Math.round(n / 32) * 32);
+  return wRatio >= hRatio
+    ? { width: snap32(base * (wRatio / hRatio)), height: snap32(base) }
+    : { width: snap32(base), height: snap32(base * (hRatio / wRatio)) };
+}
+
 async function submitGeneration() {
   const prompt = (promptInput?.value || '').trim();
   if (currentMode === 'image' && !prompt) {
@@ -349,11 +363,11 @@ async function submitGeneration() {
     let endpoint = '/api/comfy/generate/image';
     let payload;
     if (currentMode === 'image') {
-      const [w, h] = (imgSizeSelect?.value || '1024x1024').split('x').map(Number);
+      const { width: w, height: h } = resolveStudioDimensions(imgSizeSelect?.value || '720p', imgRatioSelect?.value || '1:1');
       payload = { prompt, width: w, height: h, model: imgModelSelect?.value || 'sdxl' };
     } else {
       endpoint = '/api/comfy/generate/video';
-      const [w, h] = (vidSizeSelect?.value || '608x352').split('x').map(Number);
+      const { width: w, height: h } = resolveStudioDimensions(vidSizeSelect?.value || '480p', vidRatioSelect?.value || '16:9');
       const duration = Number(vidDurationSelect?.value || 3);
       payload = {
         prompt,
